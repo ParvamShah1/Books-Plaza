@@ -63,12 +63,13 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
 }
 
+const { uploadToCloudinary } = require('./config/cloudinary');
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, uploadsDir);
+    cb(null, '/tmp');
   },
   filename: (req, file, cb) => {
-    // Generate unique filename
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, uniqueSuffix + path.extname(file.originalname));
   }
@@ -86,11 +87,13 @@ const checkAdminCode = (req, res, next) => {
 };
 
 // Upload a new book (with image upload and validation)
-app.post('/api/books', upload.single('image'), [
+app.post('/api/admin/books', checkAdminCode, upload.single('image'), [
   body('title').notEmpty().trim().escape().withMessage('Title is required'),
   body('author').notEmpty().trim().escape().withMessage('Author is required'),
   body('description').notEmpty().trim().escape().withMessage('Description is required'),
   body('price').isFloat({ min: 0.01 }).withMessage('Price must be a positive number'),
+  body('genre').notEmpty().trim().escape().withMessage('Genre is required'),
+  body('language').notEmpty().trim().escape().withMessage('Language is required'),
 ], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -98,24 +101,40 @@ app.post('/api/books', upload.single('image'), [
   }
 
   try {
-    const { title, author, description, price } = req.body;
-    console.log('req.file:', req.file);
-    const imageUrl = req.file ? `${API_URL}/uploads/${req.file.filename}` : null;
-    console.log('Inserting:', { title, author, description, price, imageUrl });
+    const { title, author, description, price, genre, language } = req.body;
+    console.log('Request body:', { title, author, description, price, genre, language });
+    
+    let imageUrl = null;
+    if (req.file) {
+      try {
+        imageUrl = await uploadToCloudinary(req.file);
+        if (!imageUrl) {
+          throw new Error('Failed to get image URL from Cloudinary');
+        }
+        console.log('Cloudinary upload successful, image URL:', imageUrl);
+      } catch (uploadError) {
+        console.error('Error uploading to Cloudinary:', uploadError);
+        return res.status(500).json({ error: 'Failed to upload image' });
+      }
+    }
 
-    // Your original INSERT statement:
     const result = await db.query(
-      'INSERT INTO books (title, author, description, price, image_url) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [title, author, description, price, imageUrl]
+      'INSERT INTO books (title, author, description, price, genre, language, image_url, is_active) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+      [title, author, description, price, genre, language, imageUrl, true]
     );
 
+    console.log('Book created successfully:', result.rows[0]);
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    console.error('Error uploading book:', err);
+    console.error('Error creating book:', {
+      error: err.message,
+      stack: err.stack,
+      code: err.code
+    });
     if (err.code === '23505') {
       return res.status(400).json({ error: 'A book with that title already exists' });
     }
-    res.status(500).json({ error: 'Error uploading book' });
+    res.status(500).json({ error: 'Error creating book: ' + err.message });
   }
 });
 
@@ -164,10 +183,7 @@ app.get('/api/admin/books', checkAdminCode, async (req, res) => {
       queryParams
     );
 
-    const books = booksResult.rows.map(book => ({
-      ...book,
-      image_url: book.image_url ? `${API_URL}/uploads/${path.basename(book.image_url)}` : null
-    }));
+    const books = booksResult.rows;
 
     res.json({
       books,
@@ -227,7 +243,8 @@ app.put('/api/admin/books/:id', checkAdminCode, upload.single('image'), [
     
     let imageUrl = undefined;
     if (req.file) {
-      imageUrl = `${API_URL}/uploads/${req.file.filename}`;
+      imageUrl = await uploadToCloudinary(req.file);
+      console.log('Cloudinary upload completed for update, image URL:', imageUrl);
     }
 
     const updateFields = ['title', 'author', 'description', 'price', 'genre', 'language'];
@@ -263,25 +280,17 @@ app.delete('/api/admin/books/:id', checkAdminCode, async (req, res) => {
   const bookId = req.params.id;
 
   try {
-    // 1. Check if the book exists and if the user is an admin
+    // Check if the book exists
     const bookResult = await db.query('SELECT * FROM books WHERE book_id = $1', [bookId]);
     if (bookResult.rows.length === 0) {
       return res.status(404).json({ error: 'Book not found' });
     }
-    const book = bookResult.rows[0];
 
-    // Add logic here to check if the user is an admin (e.g., based on a role in the JWT)
-
-    // 2. Delete the associated image file (if it exists)
-    if (book.image_url) {
-      const imagePath = path.join(__dirname, book.image_url);
-      fs.unlink(imagePath, (err) => {
-        if (err) console.error('Error deleting image:', err);
-      });
-    }
-
-    // 3. Delete the book from the database
-    await db.query('DELETE FROM books WHERE book_id = $1', [bookId]);
+    // Implement soft delete by updating deleted_at timestamp
+    await db.query(
+      'UPDATE books SET deleted_at = CURRENT_TIMESTAMP, is_active = false WHERE book_id = $1',
+      [bookId]
+    );
 
     res.json({ message: 'Book deleted successfully' });
   } catch (err) {
@@ -419,7 +428,7 @@ app.get('/api/books/featured', async (req, res) => {
     
     const books = result.rows.map(book => ({
       ...book,
-      image_url: book.image_url ? `${API_URL}/uploads/${path.basename(book.image_url)}` : null
+      image_url: book.image_url // Cloudinary URL is already stored in the database
     }));
 
     res.json(books);
@@ -465,19 +474,10 @@ app.put('/api/admin/books/:id', checkAdminCode, upload.single('image'), async (r
 
     let imageUrl = existingBook.rows[0].image_url;
     
-    // If a new image is uploaded, update the image_url
+    // If a new image is uploaded, update the image_url using Cloudinary
     if (req.file) {
-      imageUrl = `${API_URL}/uploads/${req.file.filename}`;
-      
-      // Delete old image if it exists
-      if (existingBook.rows[0].image_url) {
-        const oldImagePath = path.join(__dirname, existingBook.rows[0].image_url);
-        try {
-          fs.unlinkSync(oldImagePath);
-        } catch (err) {
-          console.error('Error deleting old image:', err);
-        }
-      }
+      imageUrl = await uploadToCloudinary(req.file);
+      console.log('Cloudinary upload completed for update, image URL:', imageUrl);
     }
 
     const result = await db.query(
@@ -507,7 +507,7 @@ app.get('/api/books/:id', async (req, res) => {
 
     const book = {
       ...result.rows[0],
-      image_url: result.rows[0].image_url ? `${API_URL}/uploads/${path.basename(result.rows[0].image_url)}` : null
+      image_url: result.rows[0].image_url // Use Cloudinary URL directly
     };
 
     res.json(book);
@@ -794,6 +794,7 @@ async function sendConfirmationEmail(email, orderId, cartItems, shippingAddress)
     console.log('Confirmation email sent successfully');
   } catch (err) {
     console.error('Error sending confirmation email:', err);
+    throw error;
   }
 }
 

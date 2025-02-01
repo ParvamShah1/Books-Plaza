@@ -22,7 +22,7 @@ const Cart: React.FC<CartProps> = ({ cart, onUpdateCart, onRemoveFromCart }) => 
     if (newQuantity < 1) return;
     
     const newCart = cart.map(item =>
-      item.id === bookId ? { ...item, quantity: newQuantity } : item
+      item.book_id === bookId ? { ...item, quantity: newQuantity } : item
     );
     onUpdateCart(newCart);
     toast.success('Cart updated');
@@ -84,7 +84,7 @@ const Cart: React.FC<CartProps> = ({ cart, onUpdateCart, onRemoveFromCart }) => 
         <div className="space-y-4 mb-6" >
           {cart.map((item) => (
             <div
-              key={item.id}
+              key={item.book_id}
               className="bg-white rounded-2xl shadow-lg overflow-hidden"
             >
               <div className="flex items-start p-4">
@@ -139,7 +139,7 @@ const Cart: React.FC<CartProps> = ({ cart, onUpdateCart, onRemoveFromCart }) => 
                       ))}
                     </div>
                     <button
-                      onClick={() => handleRemoveItem(item.id)}
+                      onClick={() => handleRemoveItem(item.book_id)}
                       className="p-2 text-gray-400 hover:text-red-500 transition-colors"
                     >
                       <FaTrash size={16} />
