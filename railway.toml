@@ -1,6 +1,6 @@
 [build]
 builder = "nixpacks"
-buildCommand = "cd \"Online Book Festival/backend\" && npm install"
+buildCommand = "cd Online\ Book\ Festival/backend && npm install"
 
 [deploy]
 startCommand = "cd \"Online Book Festival/backend\" && node index.js"
