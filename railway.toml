@@ -1,11 +1,14 @@
 [build]
 builder = "nixpacks"
-buildCommand = "cd 'Online Book Festival/backend' && npm install"
+buildCommand = "cd \"Online Book Festival/backend\" && npm install"
 
 [deploy]
-startCommand = "cd 'Online Book Festival/backend' && npm start"
+startCommand = "cd \"Online Book Festival/backend\" && node index.js"
 healthcheckPath = "/api/health"
 restartPolicyType = "on_failure"
 
 [service]
 root_directory = "Online Book Festival/backend"
+
+[nixpacks]
+nodejs_version = "18"
