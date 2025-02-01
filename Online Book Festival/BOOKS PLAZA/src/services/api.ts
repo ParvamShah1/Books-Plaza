@@ -134,8 +134,23 @@ export const placeOrder = async (cartItems: any[], shippingDetails: any) => {
 };
 
 export const getOrders = async () => {
-  const response = await api.get('/admin/orders');
-  return response.data;
+  try {
+    const response = await api.get('/admin/orders');
+    return response.data.orders; // Return the orders array from the response
+  } catch (error) {
+    console.error('Error fetching orders:', error);
+    throw error;
+  }
+};
+
+export const updateOrderStatus = async (orderId: number, status: string) => {
+  try {
+    const response = await api.put(`/admin/orders/${orderId}/status`, { status });
+    return response.data;
+  } catch (error) {
+    console.error('Error updating order status:', error);
+    throw error;
+  }
 };
 
 export const createPayment = async (paymentData: {

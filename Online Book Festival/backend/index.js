@@ -351,32 +351,55 @@ app.get('/api/admin/orders', checkAdminCode, async (req, res) => {
     const totalOrders = parseInt(countResult.rows[0].count);
 
     // Query to get the paginated orders
-    // Construct the SQL query to join 'orders' with 'users' and 'order_items'
     let orderQuery = `
-      SELECT 
-        o.order_id, 
-        o.order_date, 
-        o.total_amount, 
-        o.payment_status,
-        u.user_id,
-        u.username,
-        u.email,
-        json_agg(json_build_object('book_id', oi.book_id, 'quantity', oi.quantity, 'price', oi.price)) as items
-      FROM orders o
-      JOIN users u ON o.user_id = u.user_id
-      LEFT JOIN order_items oi ON o.order_id = oi.order_id
-    `;
-
-    orderQuery += whereClause;
-    orderQuery += `
-      GROUP BY o.order_id, u.user_id
-      ${orderByClause}
-      LIMIT $1 OFFSET $2
-    `;
+      WITH OrdersWithItems AS (
+        SELECT 
+          o.order_id,
+          o.created_at as order_date,
+          o.total_amount,
+          o.payment_status,
+          o.shipping_address,
+          o.customer_name,
+          o.customer_email,
+          o.customer_phone,
+          o.payment_id,
+          o.transaction_id,
+          json_agg(
+            json_build_object(
+              'id', oi.id,
+              'title', b.title,
+              'quantity', oi.quantity,
+              'price', oi.price
+            )
+          ) as items
+        FROM orders o
+        LEFT JOIN order_items oi ON o.order_id = oi.order_id
+        LEFT JOIN books b ON oi.book_id = b.book_id
+        ${whereClause}
+        GROUP BY 
+          o.order_id,
+          o.created_at,
+          o.total_amount,
+          o.payment_status,
+          o.shipping_address,
+          o.customer_name,
+          o.customer_email,
+          o.customer_phone,
+          o.payment_id,
+          o.transaction_id
+        ${orderByClause}
+      )
+      SELECT *
+      FROM OrdersWithItems
+      LIMIT $1 OFFSET $2`;
 
     const ordersResult = await db.query(orderQuery, queryParams);
-
-    const orders = ordersResult.rows;
+    
+    // Transform the response to match the frontend's expected format
+    const orders = ordersResult.rows.map(order => ({
+      ...order,
+      items: order.items[0] === null ? [] : order.items // Handle case when there are no items
+    }));
 
     res.json({
       orders,
@@ -986,6 +1009,28 @@ async function sendOrderConfirmationEmail(orderDetails) {
     throw error;
   }
 }
+
+// Toggle order status
+app.put('/api/admin/orders/:orderId/status', checkAdminCode, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { status } = req.body;
+
+    const result = await db.query(
+      'UPDATE orders SET payment_status = $1 WHERE order_id = $2 RETURNING *',
+      [status, orderId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating order status:', error);
+    res.status(500).json({ error: 'Failed to update order status' });
+  }
+});
 
 app.listen(port, '0.0.0.0', () => {
   console.log(`Server running on port ${port}`);

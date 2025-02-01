@@ -8,6 +8,9 @@ import Admin from './components/Admin';
 import CheckoutForm from './components/CheckoutForm';
 import BookDetails from './components/BookDetails';
 import { CartItem, Book } from './types';
+import AboutUs from './components/AboutUs';
+import ContactUs from './components/ContactUs';
+import ReturnPolicy from './components/ReturnPolicy';
 
 // PrivateRoute component (adjust as needed)
 const PrivateRoute = ({ children }: { children: React.ReactNode }) => {
@@ -98,6 +101,10 @@ function App() {
               } 
             />
             <Route path="/admin" element={<Admin />} />
+            <Route path="/about" element={<AboutUs />} />
+            <Route path="/contact" element={<ContactUs />} />
+            <Route path="/returns" element={<ReturnPolicy />} />
+
             <Route path="/order-success" element={<div className="text-center p-8">
               <h1 className="text-3xl font-bold text-green-600 mb-4">Order Successful!</h1>
               <p className="text-gray-600">Thank you for your purchase. You will receive an email confirmation shortly.</p>
