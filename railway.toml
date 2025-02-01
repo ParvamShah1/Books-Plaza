@@ -1,11 +1,11 @@
 [build]
 builder = "nixpacks"
-buildCommand = "cd backend && npm install"
+buildCommand = "cd 'Online Book Festival/backend' && npm install"
 
 [deploy]
-startCommand = "cd backend && npm start"
+startCommand = "cd 'Online Book Festival/backend' && npm start"
 healthcheckPath = "/api/health"
 restartPolicyType = "on_failure"
 
 [service]
-root_directory = "backend"
+root_directory = "Online Book Festival/backend"
