@@ -4,8 +4,6 @@ buildCommand = "npm install"
 
 [deploy]
 startCommand = "node index.js"
-healthcheckPath = "/api/health"
-restartPolicyType = "on_failure"
 port = "3001"
 
 [env]
