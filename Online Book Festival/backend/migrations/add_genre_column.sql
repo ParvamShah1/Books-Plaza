@@ -1,0 +1,2 @@
+ALTER TABLE books
+ADD COLUMN language VARCHAR(50);
