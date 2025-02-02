@@ -25,12 +25,32 @@ const Cart: React.FC<CartProps> = ({ cart, onUpdateCart, onRemoveFromCart }) => 
       item.book_id === bookId ? { ...item, quantity: newQuantity } : item
     );
     onUpdateCart(newCart);
-    toast.success('Cart updated');
+    toast.success('Cart updated', {
+      style: {
+        background: 'white',
+        color: 'black',
+        borderRadius: '12px',
+        boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+        padding: '12px 24px',
+      },
+      position: 'bottom-right',
+      icon: '🛒',
+    });
   };
 
   const handleRemoveItem = (bookId: number) => {
     onRemoveFromCart(bookId);
-    toast.success('Item removed from cart');
+    toast.success('Item removed from cart', {
+      style: {
+        background: 'white',
+        color: 'black',
+        borderRadius: '12px',
+        boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+        padding: '12px 24px',
+      },
+      position: 'bottom-right',
+      icon: '🗑️',
+    });
   };
 
   const handleCheckout = () => {
@@ -71,14 +91,14 @@ const Cart: React.FC<CartProps> = ({ cart, onUpdateCart, onRemoveFromCart }) => 
       {/* Back Button */}
       <button
         onClick={() => navigate(-1)}
-        className="fixed top-6 left-4 z-50 flex items-center text-black"
+        className="fixed top-6 left-4 z-50 flex items-center text-black mt-12"
       >
         <FaArrowLeft className="mr-2" />
         Back
       </button>
 
       <div className="max-w-lg mx-auto">
-        <h1 className="text-2xl font-bold text-black mb-6">Your Cart</h1>
+        <h1 className="text-2xl font-bold text-black mb-6 mt-8">Your Cart</h1>
         
         {/* Cart Items */}
         <div className="space-y-4 mb-6" >
@@ -107,10 +127,11 @@ const Cart: React.FC<CartProps> = ({ cart, onUpdateCart, onRemoveFromCart }) => 
                   {/* Quantity Controls */}
                   <div className="flex items-center justify-between mt-2">
                     <div className="flex items-center space-x-2">
+                      {/* // Inside the cart.map where quantity controls are rendered */}
                       {[
                         {
                           icon: <FaMinus size={12} />,
-                          onClick: () => handleQuantityChange(item.id, (item.quantity || 1) - 1),
+                          onClick: () => handleQuantityChange(item.book_id, (item.quantity || 1) - 1), // Changed from item.id
                           disabled: item.quantity === 1,
                           type: 'minus'
                         },
@@ -120,7 +141,7 @@ const Cart: React.FC<CartProps> = ({ cart, onUpdateCart, onRemoveFromCart }) => 
                         },
                         {
                           icon: <FaPlus size={12} />,
-                          onClick: () => handleQuantityChange(item.id, (item.quantity || 1) + 1),
+                          onClick: () => handleQuantityChange(item.book_id, (item.quantity || 1) + 1), // Changed from item.id
                           type: 'plus'
                         }
                       ].map((control) => (

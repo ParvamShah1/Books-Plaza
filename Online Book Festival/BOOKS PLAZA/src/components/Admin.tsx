@@ -158,7 +158,18 @@ function Admin() {
       }
     }
   }, [isAuthenticated, currentPage, search, sortBy, sortOrder, filters, activeTab]);
-
+  const handleEdit = (book: Book) => {
+    setSelectedBook(book);
+    setFormData({
+      title: book.title,
+      author: book.author,
+      description: book.description || '',
+      price: book.price.toString(),
+      genre: book.genre,
+      language: book.language,
+      image: null,
+    });
+  };
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.title || !formData.author || !formData.price || !formData.genre || !formData.language) {
@@ -209,17 +220,99 @@ function Admin() {
     }
   };
 
+  // Update the books state to include sorting
+  const sortedBooks = books
+    .filter(book => !book.deleted_at) // Only show non-deleted books
+    .sort((a, b) => {
+      // Sort by active status first
+      if (a.is_active !== b.is_active) {
+        return a.is_active ? -1 : 1;
+      }
+      // Then sort by title
+      return a.title.localeCompare(b.title);
+    });
+
+  // Update the books table section
+  <tbody className="bg-white divide-y divide-gray-200">
+    {sortedBooks.map((book) => (
+      <tr key={book.book_id}>
+        <td className="px-6 py-4 whitespace-nowrap">
+          <div className="text-sm font-medium text-gray-900">{book.title}</div>
+        </td>
+        <td className="px-6 py-4 whitespace-nowrap">
+          <div className="text-sm text-gray-500">{book.author}</div>
+        </td>
+        <td className="px-6 py-4 whitespace-nowrap">
+          <div className="text-sm text-gray-900">${book.price}</div>
+        </td>
+        <td className="px-6 py-4 whitespace-nowrap">
+          <div className="text-sm text-gray-500">{book.genre}</div>
+        </td>
+        <td className="px-6 py-4 whitespace-nowrap">
+          <div className="text-sm text-gray-500">{book.language}</div>
+        </td>
+        <td className="px-6 py-4 whitespace-nowrap">
+          <span
+            onClick={() => handleToggleStatus(book.book_id, book.is_active)}
+            className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full cursor-pointer hover:opacity-80 ${
+              book.is_active
+                ? 'bg-green-100 text-green-800'
+                : 'bg-red-100 text-red-800'
+            }`}
+          >
+            {book.is_active ? 'Active' : 'Inactive'}
+          </span>
+        </td>
+        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
+          <button
+            onClick={() => handleEdit(book)}
+            className="text-orange-600 hover:text-orange-900"
+          >
+            Edit
+          </button>
+          <button
+            onClick={() => handleDelete(book.book_id)}
+            className="text-red-600 hover:text-red-900"
+          >
+            Delete
+          </button>
+        </td>
+      </tr>
+    ))}
+  </tbody>
+
+  // Update the handleDelete function
   const handleDelete = async (bookId: number) => {
     if (!window.confirm('Are you sure you want to delete this book?')) return;
 
     try {
       setIsLoading(true);
       await deleteBook(bookId);
-      toast.success('Book deleted successfully');
-      fetchBooks();
+      toast.success('Book deleted successfully', {
+        style: {
+          background: 'white',
+          color: 'black',
+          borderRadius: '12px',
+          boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+          padding: '12px 24px',
+        },
+        position: 'bottom-right',
+        icon: '🗑️',
+      });
+      fetchBooks(); // This will refresh the list with only non-deleted books
     } catch (error) {
       console.error('Error deleting book:', error);
-      toast.error('Failed to delete book');
+      toast.error('Failed to delete book', {
+        style: {
+          background: 'white',
+          color: 'black',
+          borderRadius: '12px',
+          boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+          padding: '12px 24px',
+        },
+        position: 'bottom-right',
+        icon: '❌',
+      });
       if (error?.response?.status === 401) {
         setIsAuthenticated(false);
       }
@@ -473,8 +566,9 @@ function Admin() {
                       </th>
                     </tr>
                   </thead>
+                  {/* // Then update the table body to use sortedBooks instead of books */}
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {books.map((book) => (
+                    {sortedBooks.map((book) => (
                       <tr key={book.book_id}>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm font-medium text-gray-900">{book.title}</div>
@@ -493,7 +587,8 @@ function Admin() {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <span
-                            className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                            onClick={() => handleToggleStatus(book.book_id, book.is_active)}
+                            className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full cursor-pointer hover:opacity-80 ${
                               book.is_active
                                 ? 'bg-green-100 text-green-800'
                                 : 'bg-red-100 text-red-800'
@@ -504,16 +599,10 @@ function Admin() {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
                           <button
-                            onClick={() => setSelectedBook(book)}
+                            onClick={() => handleEdit(book)}
                             className="text-orange-600 hover:text-orange-900"
                           >
                             Edit
-                          </button>
-                          <button
-                            onClick={() => handleToggleStatus(book.book_id, book.is_active)}
-                            className="text-blue-600 hover:text-blue-900"
-                          >
-                            {book.is_active ? 'Deactivate' : 'Activate'}
                           </button>
                           <button
                             onClick={() => handleDelete(book.book_id)}

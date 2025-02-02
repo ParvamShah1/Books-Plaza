@@ -48,19 +48,36 @@ function App() {
       if (existingItemIndex > -1) {
         const newCart = [...currentCart];
         newCart[existingItemIndex].quantity += 1;
-        toast.success(`Added another copy of ${book.title} to cart`);
+        toast.success(`Added another copy of ${book.title} to cart`, {
+          style: {
+            background: 'white',
+            color: 'black',
+            borderRadius: '12px',
+            boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+            padding: '12px 24px',
+          },
+          position: 'bottom-right',
+          icon: '🛒',
+        });
         return newCart;
       } else {
-        toast.success(`Added ${book.title} to cart`);
+        toast.success(`Added ${book.title} to cart`, {
+          style: {
+            background: 'white',
+            color: 'black',
+            borderRadius: '12px',
+            boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+            padding: '12px 24px',
+          },
+          position: 'bottom-right',
+          icon: '🛒',
+        });
         return [...currentCart, {...book, quantity: 1}];
       }
     });
   };
 
-  const handleCartUpdate = (newCart: CartItem[]) => {
-    setCart(newCart);
-  };
-
+  
   const handleUpdateCart = (newCart: CartItem[]) => {
     setCart(newCart);
   };
@@ -76,7 +93,7 @@ function App() {
   return (
     <Router>
       <div className="min-h-screen bg-gray-50">
-        <Toaster position="top-right" />
+        <Toaster position="bottom-right" />
         <Navbar cartItemCount={cart.reduce((total, item) => total + item.quantity, 0)} />
         <div className="pt-16">
           <Routes>

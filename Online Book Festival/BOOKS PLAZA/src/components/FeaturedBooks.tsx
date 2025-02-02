@@ -3,6 +3,8 @@ import { getFeaturedBooks } from '../services/api';
 import { Book } from '../types';
 import { Link } from 'react-router-dom';
 import { FaShoppingCart, FaBookOpen, FaChevronRight } from 'react-icons/fa';
+import { toast } from 'react-hot-toast';
+import { toastConfig } from '../utils/toastConfig';
 
 interface FeaturedBooksProps {
   onAddToCart: (book: Book) => void;
@@ -102,7 +104,8 @@ const FeaturedBooks: React.FC<FeaturedBooksProps> = ({ onAddToCart }) => {
           {filteredBooks.map((book) => (
             <div 
               key={book.book_id}
-              className="relative bg-white rounded-xl overflow-hidden shadow-lg transform hover:scale-102 transition-transform"
+              className="relative bg-white rounded-xl overflow-hidden shadow-lg transform hover:scale-102 transition-transform cursor-pointer"
+              onClick={() => window.location.href = `/books/${book.book_id}`}
             >
               {/* Image Container */}
               <div className="relative pb-[130%]">
@@ -111,11 +114,13 @@ const FeaturedBooks: React.FC<FeaturedBooksProps> = ({ onAddToCart }) => {
                   alt={book.title}
                   className="absolute inset-0 w-full h-full object-cover"
                 />
-                {/* Geometric Overlay */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent"></div>
                 {/* Quick Add Button */}
                 <button
-                  onClick={() => onAddToCart(book)}
+                  onClick={(e) => {
+                    e.stopPropagation(); // Prevent triggering the parent onClick
+                    onAddToCart(book);
+                  }}
                   className="absolute bottom-2 right-2 w-10 h-10 rounded-full bg-white/90 shadow-lg flex items-center justify-center transform hover:scale-110 transition-transform"
                 >
                   <FaShoppingCart className="text-orange-500" />
@@ -130,21 +135,18 @@ const FeaturedBooks: React.FC<FeaturedBooksProps> = ({ onAddToCart }) => {
                 <p className="text-xs text-gray-600 mb-2">By {book.author}</p>
                 <div className="flex items-center justify-between">
                   <p className="text-sm font-bold text-black">₹{book.price}</p>
-                  <Link 
-                    to={`/books/${book.book_id}`}
-                    className="flex items-center text-xs text-orange-500 font-medium"
-                  >
-                    View <FaChevronRight className="ml-1" size={10} />
-                  </Link>
+                  <span className="px-2 py-1 bg-orange-100 text-black text-xs font-medium rounded-lg">
+                    {book.genre}
+                  </span>
                 </div>
               </div>
 
-              {/* Genre Tag */}
-              <div className="absolute top-2 left-2">
+              {/* Remove the genre tag from top-left position */}
+              {/* <div className="absolute top-2 left-2">
                 <span className="px-2 py-1 bg-white/90 text-black text-xs font-medium rounded-lg shadow-lg">
                   {book.genre}
                 </span>
-              </div>
+              </div> */}
             </div>
           ))}
         </div>

@@ -196,16 +196,19 @@ const CheckoutForm: React.FC = () => {
                       <label htmlFor={field.name} className="block text-sm font-medium text-gray-700">
                         {field.label}
                       </label>
+                      {/* Update the phone input field styling */}
                       {'prefix' in field ? (
                         <div className="relative mt-1">
-                          <span className="absolute left-3 top-2 text-gray-500">{field.prefix}</span>
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">
+                            {field.prefix}
+                          </span>
                           <input
                             type={field.type}
                             id={field.name}
                             name={field.name}
                             value={formData[field.name as keyof FormData].replace('+91', '')}
                             onChange={handleChange}
-                            className="block w-full pl-12 rounded-md border-gray-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
+                            className="block w-full pl-14 rounded-md border-gray-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
                             pattern="[0-9]{10}"
                             maxLength={10}
                             placeholder="Enter 10-digit number"
