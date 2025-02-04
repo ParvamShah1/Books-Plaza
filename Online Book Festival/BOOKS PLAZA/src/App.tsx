@@ -11,6 +11,7 @@ import { CartItem, Book } from './types';
 import AboutUs from './components/AboutUs';
 import ContactUs from './components/ContactUs';
 import ReturnPolicy from './components/ReturnPolicy';
+import Terms from './components/Terms';
 
 // PrivateRoute component (adjust as needed)
 const PrivateRoute = ({ children }: { children: React.ReactNode }) => {
@@ -119,6 +120,8 @@ function App() {
             />
             <Route path="/admin" element={<Admin />} />
             <Route path="/about" element={<AboutUs />} />
+            <Route path="/terms-and-conditions" element={<Terms />} />
+
             <Route path="/contact" element={<ContactUs />} />
             <Route path="/returns" element={<ReturnPolicy />} />
 
