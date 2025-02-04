@@ -8,11 +8,14 @@ export interface Book {
   image_url: string;
   is_active: boolean;
   created_at?: string;
+  genre: string;
+  language: string;
 }
 
 export interface CartItem extends Book {
   quantity: number;
-  cart_id?: number;
+  id?: string; // Add this line to make id optional
+  book_id: number;
 }
 
 export interface User {

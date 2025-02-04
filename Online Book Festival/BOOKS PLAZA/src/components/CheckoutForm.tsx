@@ -35,7 +35,12 @@ interface FormData {
   country: string;
 }
 
-const CheckoutForm: React.FC = () => {
+interface CheckoutFormProps {
+  cart: CartItem[];
+  onCheckoutComplete: () => void;
+}
+
+const CheckoutForm: React.FC<CheckoutFormProps> = ({ cart, onCheckoutComplete }) => {
   const [formData, setFormData] = useState<FormData>({
     firstName: '',
     lastName: '',
@@ -54,6 +59,8 @@ const CheckoutForm: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const total = subtotal;
+  const inflatedSubtotal = Math.round(subtotal * 1.2);
+  const discount = Math.round(subtotal * 0.2);
 
   useEffect(() => {
     // Load cart items
@@ -175,8 +182,22 @@ const CheckoutForm: React.FC = () => {
                 {cartItems.map(renderCartItem)}
               </div>
               <div className="border-t pt-4 space-y-2">
-                {renderPriceRow('Subtotal', subtotal)}
-                {renderPriceRow('Total', total, true)}
+                  {[
+                    { label: 'Subtotal', value: `₹${inflatedSubtotal}` },
+                    { label: 'Delivery', value: 'Free', className: 'text-blue-600' },
+                    { label: 'Discount', value: `-₹${discount}`, className: 'text-green-600' },
+                    { type: 'divider' },
+                    { label: 'Total', value: `₹${subtotal}`, bold: true }
+                  ].map((item, index) => (
+                    item.type === 'divider' ? (
+                      <div key={`summary-divider-${index}`} className="h-px bg-gray-100 my-2"></div>
+                    ) : (
+                      <div key={`price-${index}`} className={`flex justify-between ${item.bold ? 'text-base font-semibold' : 'text-sm'}`}>
+                        <span className={item.bold ? '' : 'text-gray-600'}>{item.label}</span>
+                        <span className={item.className || (item.bold ? '' : '')}>{item.value}</span>
+                      </div>
+                    )
+                  ))}
               </div>
             </div>
           </div>

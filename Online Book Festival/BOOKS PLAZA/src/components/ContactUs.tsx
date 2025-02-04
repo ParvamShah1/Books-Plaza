@@ -26,7 +26,7 @@ const ContactUs: React.FC = () => {
             {
               icon: <FaWhatsapp className="text-green-500" />,
               title: 'WhatsApp',
-              description: '+91 987-654-3210',
+              description: '+91 8111000098',
               action: handleWhatsAppClick,
               actionText: 'Chat Now'
             },

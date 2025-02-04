@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import { FaTrash, FaMinus, FaPlus, FaArrowLeft } from 'react-icons/fa';
 import { Book } from '../types';
-import { book } from 'lucide-react';
+// import { book } from 'lucide-react';
 
 interface CartItem extends Book {
   quantity: number;
@@ -123,7 +123,9 @@ const Cart: React.FC<CartProps> = ({ cart, onUpdateCart, onRemoveFromCart }) => 
                   <h3 className="text-black font-semibold line-clamp-1">{item.title}</h3>
                   <p className="text-sm text-gray-600 mb-2">By {item.author}</p>
                   <p className="text-black font-bold">₹{item.price}</p>
-
+                  <span className="text-sm text-gray-500 line-through">
+                ₹{Math.round(item.price * 1.2)}
+              </span>
                   {/* Quantity Controls */}
                   <div className="flex items-center justify-between mt-2">
                     <div className="flex items-center space-x-2">
@@ -146,10 +148,10 @@ const Cart: React.FC<CartProps> = ({ cart, onUpdateCart, onRemoveFromCart }) => 
                         }
                       ].map((control) => (
                         control.type === 'count' ? (
-                          <span key={`${item.id}-count`} className="text-black font-medium">{control.content}</span>
+                          <span key={`${item.book_id}-count`} className="text-black font-medium">{control.content}</span>
                         ) : (
                           <button
-                            key={`${item.id}-${control.type}`}
+                            key={`${item.book_id}-${control.type}`}
                             onClick={control.onClick}
                             disabled={control.disabled}
                             className="p-1.5 bg-orange-100 text-orange-500 rounded-lg hover:bg-orange-200 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -177,8 +179,9 @@ const Cart: React.FC<CartProps> = ({ cart, onUpdateCart, onRemoveFromCart }) => 
           <h2 className="text-lg font-bold text-black mb-4">Order Summary</h2>
           <div className="space-y-2 mb-4">
             {[
-              { label: 'Subtotal', value: `₹${totalAmount}` },
-              { label: 'Delivery', value: 'Free' },
+              { label: 'Subtotal', value: `₹${Math.round(totalAmount * 1.2)}` },
+              { label: 'Delivery', value: 'Free', className: 'text-blue-600' },
+              { label: 'Discount', value: `-₹${Math.round(totalAmount * 0.2)}`, className: 'text-green-600' },
               { type: 'divider' },
               { label: 'Total', value: `₹${totalAmount}`, bold: true }
             ].map((item, index) => (
@@ -187,7 +190,7 @@ const Cart: React.FC<CartProps> = ({ cart, onUpdateCart, onRemoveFromCart }) => 
               ) : (
                 <div key={`summary-${index}`} className={`flex justify-between ${item.bold ? 'text-black font-bold' : 'text-gray-600'}`}>
                   <span>{item.label}</span>
-                  <span>{item.value}</span>
+                  <span className={item.className}>{item.value}</span>
                 </div>
               )
             ))}

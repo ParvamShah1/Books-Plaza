@@ -109,11 +109,9 @@ const BookDetails: React.FC<BookDetailsProps> = ({ onAddToCart }) => {
             
             <div className="flex items-baseline space-x-2">
               <span className="text-2xl font-bold text-black">₹{book.price}</span>
-              {book.original_price && (
-                <span className="text-sm text-gray-500 line-through">
-                  ₹{book.original_price}
-                </span>
-              )}
+              <span className="text-sm text-gray-500 line-through">
+                ₹{Math.round(book.price * 1.2)}
+              </span>
             </div>
           </div>
         </div>
@@ -128,7 +126,7 @@ const BookDetails: React.FC<BookDetailsProps> = ({ onAddToCart }) => {
             </div>
             <div className="flex justify-start py-2 border-b border-gray-100">
               <span className="text-black">Language:</span>
-              <span className="text-gray-600 font-medium">{book.language || 'English'}</span>
+              <span className="text-gray-600 font-medium">{book.language}</span>
             </div>
             <div className="flex justify-start py-2 border-b border-gray-100">
               <span className="text-black">Genre:</span>

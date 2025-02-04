@@ -133,20 +133,23 @@ const FeaturedBooks: React.FC<FeaturedBooksProps> = ({ onAddToCart }) => {
                   {book.title}
                 </h3>
                 <p className="text-xs text-gray-600 mb-2">By {book.author}</p>
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-start gap-2">
                   <p className="text-sm font-bold text-black">₹{book.price}</p>
-                  <span className="px-2 py-1 bg-orange-100 text-black text-xs font-medium rounded-lg">
+                  <span className="text-sm font-bold text-gray-500 line-through ">
+                ₹{Math.round(book.price * 1.2)}
+                </span>
+                  {/* <span className="px-2 py-1 bg-orange-100 text-black text-xs font-medium rounded-lg">
                     {book.genre}
-                  </span>
+                  </span> */}
                 </div>
               </div>
 
               {/* Remove the genre tag from top-left position */}
-              {/* <div className="absolute top-2 left-2">
+              <div className="absolute top-2 left-2">
                 <span className="px-2 py-1 bg-white/90 text-black text-xs font-medium rounded-lg shadow-lg">
                   {book.genre}
                 </span>
-              </div> */}
+              </div>
             </div>
           ))}
         </div>
