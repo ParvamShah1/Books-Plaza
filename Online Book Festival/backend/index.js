@@ -24,9 +24,7 @@ if (!process.env.PHONEPE_MERCHANT_ID || !process.env.PHONEPE_SALT_KEY || !proces
   process.exit(1);
 }
 
-const PAYU_BASE_URL = process.env.PAYU_MODE === 'production'
-  ? 'https://secure.payu.in'
-  : 'https://sandboxsecure.payu.in';
+
 
 const API_URL = process.env.API_URL || 'http://localhost:3001';
 
@@ -38,8 +36,6 @@ app.use(cors({
 
 app.use(express.json());
 
-// Session configuration
-// Session store setup
 const MemoryStore = require('memorystore')(session);
 
 app.use(
@@ -638,166 +634,197 @@ app.use((req, res, next) => {
   next();
 });
 
-// PhonePe Production configuration
-const MERCHANT_ID = 'SU2502061144102605234710';
-const SALT_KEY = '4d439002-4d98-4ac0-b49d-cc3600fe5a0b';
-const SALT_INDEX = '1';
-const CLIENT_ID = process.env.PHONEPE_CLIENT_ID;        // Add to your .env file
-const CLIENT_SECRET = process.env.PHONEPE_CLIENT_SECRET; // Add to your .env file
-const AUTH_URL = 'https://api.phonepe.com/apis/identity-manager/token';
-const PG_BASE_URL = 'https://api.phonepe.com/apis/pg';
 
-// Function to get auth token
-async function getPhonePeAuthToken() {
-    try {
-        const response = await axios.post(AUTH_URL, {
-            clientId: CLIENT_ID,
-            clientSecret: CLIENT_SECRET
-        }, {
-            headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            }
-        });
 
-        if (response.data && response.data.access_token) {
-            return response.data.access_token;
-        }
-        throw new Error('Failed to get auth token');
-    } catch (error) {
-        console.error('Auth token error:', error);
-        throw error;
-    }
-}
 
-// Create payment endpoint
+const PAY_PAGE_URL = `${process.env.PHONEPE_API_URL}/pg/v1/pay`;
+const VERIFY_STATUS_URL = `${process.env.PHONEPE_API_URL}/pg/v1/status`;
+const MERCHANT_ID = process.env.PHONEPE_MERCHANT_ID;
+const SALT_KEY = process.env.PHONEPE_SALT_KEY;
+const SALT_INDEX = process.env.PHONEPE_SALT_INDEX;
+
+// Enhanced X-VERIFY calculation
+const calculateXVerify = (base64Payload, path, saltKey, saltIndex) => {
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+    const stringToHash = base64Payload + normalizedPath + saltKey;
+    console.log('Hash Input:', { 
+        base64Payload,
+        normalizedPath,
+        saltKey: saltKey ? '***' : 'MISSING',
+        saltIndex 
+    });
+    return crypto.createHash('sha256').update(stringToHash).digest('hex') + `###${saltIndex}`;
+};
+
+// Create Payment Endpoint
 app.post('/api/create-payment', async (req, res) => {
+  let merchantTransactionId; // Declare outside try block for error handling
+  
+  try {
+      console.log('Environment Config:', {
+          MERCHANT_ID: MERCHANT_ID ? '***' : 'MISSING',
+          SALT_INDEX,
+          PHONEPE_API_URL: process.env.PHONEPE_API_URL,
+          CALLBACK_URL: `${process.env.BACKEND_URL}/api/payment/phonepe-callback`
+      });
+
+      // Validate required fields
+      const requiredFields = ['orderId', 'amount', 'customerName', 'customerEmail', 'customerPhone'];
+      const missingFields = requiredFields.filter(field => !req.body[field]);
+      if (missingFields.length) {
+          return res.status(400).json({ 
+              error: 'Missing required fields',
+              missing: missingFields 
+          });
+      }
+
+      // Sanitize inputs
+      const { orderId, amount, customerPhone } = req.body;
+      const sanitizedOrderId = String(orderId).replace(/\D/g, '').padStart(4, '0');
+      const sanitizedPhone = String(customerPhone).replace(/\D/g, '');
+
+      // Validations
+      if (isNaN(Number(amount)) || Number(amount) <= 0) {
+          return res.status(400).json({ error: 'Invalid amount value' });
+      }
+      if (sanitizedPhone.length < 10) {
+          return res.status(400).json({ error: 'Invalid phone number' });
+      }
+
+      // Generate transaction ID
+      merchantTransactionId = `MT${Date.now()}_${sanitizedOrderId.slice(-10)}`;
+
+      // Construct payload
+      const payload = {
+          merchantId: MERCHANT_ID,
+          merchantTransactionId,
+          merchantUserId: `CUST_${sanitizedPhone.slice(-6)}`,
+          amount: Math.round(Number(amount) * 100),
+          redirectUrl: `${process.env.BACKEND_URL}/api/payment/phonepe-callback`,
+          callbackUrl: `${process.env.BACKEND_URL}/api/payment/phonepe-callback`,
+          mobileNumber: sanitizedPhone.slice(-10),
+          paymentInstrument: { type: 'PAY_PAGE' }
+      };
+
+      // Generate X-VERIFY
+      const payloadString = JSON.stringify(payload);
+      const base64Payload = Buffer.from(payloadString).toString('base64');
+      const xVerify = calculateXVerify(base64Payload, '/pg/v1/pay', SALT_KEY, SALT_INDEX);
+
+      console.log('Payment Request:', {
+          headers: { 'X-VERIFY': xVerify },
+          payload: base64Payload
+      });
+
+      // PhonePe API Call
+      const response = await axios.post(PAY_PAGE_URL, 
+          { request: base64Payload },
+          { 
+              headers: { 
+                  'X-VERIFY': xVerify, 
+                  'Content-Type': 'application/json',
+                  'X-MERCHANT-ID': MERCHANT_ID 
+              },
+              timeout: 10000 
+          }
+      );
+
+      // Handle success response
+      if (response.data?.success && response.data?.data?.instrumentResponse?.redirectInfo?.url) {
+          await db.query(
+              `UPDATE orders 
+               SET transaction_id = $1, 
+                   payment_status = 'pending', 
+                   payment_initiated_at = NOW()
+               WHERE order_id = $2`,
+              [merchantTransactionId, sanitizedOrderId]
+          );
+
+          return res.json({
+              success: true,
+              redirectUrl: response.data.data.instrumentResponse.redirectInfo.url,
+              transactionId: merchantTransactionId,
+              amount: payload.amount / 100
+          });
+      }
+
+      // Handle PhonePe errors
+      const errorMessage = response.data?.message || 'Payment gateway error';
+      console.error('PhonePe API Error:', {
+          status: response.status,
+          data: response.data
+      });
+      throw new Error(errorMessage);
+
+  } catch (error) {
+      console.error('Payment Processing Error:', {
+          message: error.message,
+          stack: error.stack,
+          transactionId: merchantTransactionId || 'N/A'
+      });
+
+      return res.status(500).json({ 
+          success: false,
+          error: 'Payment processing failed',
+          details: error.response?.data || error.message,
+          transactionId: merchantTransactionId || 'N/A'
+      });
+  }
+});
+
+// Verify Status Endpoint
+app.post('/api/payment/verify-status', async (req, res) => {
     try {
-        const { orderId, amount, customerName, customerEmail, customerPhone } = req.body;
-        console.log('Creating payment for order:', { orderId, amount, customerName });
-
-        // Get auth token first
-        const authToken = await getPhonePeAuthToken();
-        console.log('Got auth token');
-
-        // Generate a unique transaction ID
-        const merchantTransactionId = `MT${Date.now()}`;
-
-        // Create PhonePe payment payload
-        const payload = {
-            merchantId: MERCHANT_ID,
-            merchantTransactionId: merchantTransactionId,
-            merchantUserId: `MUID${orderId}`,
-            amount: Math.round(parseFloat(amount) * 100),
-            redirectUrl: `${process.env.BACKEND_URL}/api/payment/phonepe-callback`,
-            redirectMode: "POST",
-            callbackUrl: `${process.env.BACKEND_URL}/api/payment/phonepe-callback`,
-            mobileNumber: customerPhone.replace(/\D/g, '').slice(-10),
-            paymentInstrument: {
-                type: "PAY_PAGE"
-            }
-        };
-
-        // Create Base64 encoded payload
-        const base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64');
-
-        // Create checksum
-        const string = base64Payload + "/v1/payment" + SALT_KEY;
-        const sha256 = crypto.createHash('sha256').update(string).digest('hex');
-        const checksum = `${sha256}###${SALT_INDEX}`;
-
-        const response = await axios({
-            method: 'post',
-            url: `${PG_BASE_URL}/v1/payment`,
-            data: {
-                request: base64Payload
-            },
-            headers: {
-                'Content-Type': 'application/json',
-                'X-VERIFY': checksum,
-                'X-MERCHANT-ID': MERCHANT_ID,
-                'Authorization': `Bearer ${authToken}`,
-                'Accept': 'application/json'
-            }
-        });
-
-        console.log('PhonePe response:', response.data);
-
-        if (response.data.success) {
-            await db.query(
-                'UPDATE orders SET transaction_id = $1, payment_status = $2 WHERE order_id = $3',
-                [merchantTransactionId, 'pending', orderId]
-            );
-
-            res.json({ 
-                redirectUrl: response.data.data.instrumentResponse.redirectInfo.url,
-                status: 'success',
-                orderId: orderId,
-                transactionId: merchantTransactionId
-            });
-        } else {
-            throw new Error(response.data.message || 'Payment creation failed');
+        const { merchantTransactionId } = req.body;
+        if (!merchantTransactionId) {
+            return res.status(400).json({ error: 'Transaction ID required' });
         }
 
-    } catch (error) {
-        console.error('Payment creation error:', {
-            message: error.message,
-            response: error.response?.data,
-            status: error.response?.status
+        const path = `/pg/v1/status/${MERCHANT_ID}/${merchantTransactionId}`;
+        const xVerify = calculateXVerify('', path, SALT_KEY, SALT_INDEX);
+
+        console.log('Status Check:', {
+            headers: { 'X-VERIFY': xVerify },
+            path
         });
         
-        res.status(500).json({ 
-            error: 'Failed to create payment',
-            message: error.response?.data?.message || error.message,
-            details: error.response?.data
-        });
-    }
-});
+        const response = await axios.get(
+            `${VERIFY_STATUS_URL}/${MERCHANT_ID}/${merchantTransactionId}`,
+            { 
+                headers: { 
+                    'X-VERIFY': xVerify, 
+                    'Content-Type': 'application/json',
+                    'X-MERCHANT-ID': MERCHANT_ID 
+                },
+                timeout: 10000 
+            }
+        );
 
-// Add the callback handler for production
-app.post('/api/payment/phonepe-callback', async (req, res) => {
-    try {
-        console.log('PhonePe Callback received:', {
-            body: req.body,
-            query: req.query,
-            headers: req.headers
-        });
-
-        const response = req.body;
-        const merchantTransactionId = response.merchantTransactionId;
-        const transactionId = response.transactionId;
-        const amount = response.amount;
-        const paymentStatus = response.code === 'PAYMENT_SUCCESS' ? 'paid' : 'failed';
-
-        // Update order status
+        const status = response.data?.data?.state || 'PENDING';
         await db.query(
-            'UPDATE orders SET payment_status = $1, payment_id = $2, amount_paid = $3 WHERE transaction_id = $4',
-            [paymentStatus, transactionId, amount/100, merchantTransactionId]
+            'UPDATE orders SET payment_status = $1 WHERE transaction_id = $2',
+            [status.toLowerCase(), merchantTransactionId]
         );
 
-        // Get the order details
-        const orderResult = await db.query(
-            'SELECT order_id FROM orders WHERE transaction_id = $1',
-            [merchantTransactionId]
-        );
-
-        if (orderResult.rows.length === 0) {
-            throw new Error('Order not found');
-        }
-
-        const orderId = orderResult.rows[0].order_id;
-
-        if (paymentStatus === 'paid') {
-            return res.redirect(`${process.env.FRONTEND_URL}/payment-success?orderId=${orderId}`);
-        } else {
-            return res.redirect(`${process.env.FRONTEND_URL}/payment-failed?error=Payment_failed`);
-        }
+        res.json({ 
+            status,
+            amount: response.data?.data?.amount / 100 || 0,
+            transactionId: merchantTransactionId
+        });
 
     } catch (error) {
-        console.error('Callback error:', error);
-        return res.redirect(`${process.env.FRONTEND_URL}/payment-failed?error=Server_error`);
+        console.error('Status Check Error:', {
+            message: error.message,
+            stack: error.stack
+        });
+        res.status(500).json({
+            success: false,
+            error: 'Status check failed',
+            details: error.response?.data || error.message
+        });
     }
 });
+
 
 // Get order details endpoint
 app.get('/api/orders/:orderId', async (req, res) => {

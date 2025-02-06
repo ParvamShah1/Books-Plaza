@@ -190,27 +190,52 @@ export const updateOrderStatus = async (orderId: number, status: string) => {
 };
 
 // Payment related APIs
+// Updated createPayment function
+// Updated createPayment function with proper numeric handling
 export const createPayment = async (orderData: {
-    orderId: number;
-    amount: string | number;
-    customerName: string;
-    customerEmail: string;
-    customerPhone: string;
+  orderId: number;
+  amount: number | string; // Allow both number and string input
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
 }) => {
-    try {
-        console.log('Creating payment with data:', orderData);
-        const response = await api.post('/api/create-payment', orderData);
-        
-        if (response.data.status === 'success') {
-            return response.data;
-        }
-        throw new Error(response.data.message || 'Payment creation failed');
-    } catch (error: any) {
-        console.error('Payment creation error:', error);
-        throw new Error(error.response?.data?.message || 'Failed to create payment');
-    }
-};
+  try {
+      // Convert amount to number and validate
+      const numericAmount = Number(orderData.amount);
+      
+      if (isNaN(numericAmount)) {
+          throw new Error(`Invalid amount value: ${orderData.amount}`);
+      }
 
+      // Format to 2 decimal places and convert to number
+      const formattedAmount = parseFloat(numericAmount.toFixed(2));
+
+      const payload = {
+          ...orderData,
+          amount: formattedAmount
+      };
+
+      console.log('Payment Payload:', payload);
+      
+      const response = await api.post('/api/create-payment', payload);
+      
+      if (!response.data.redirectUrl) {
+          throw new Error('Missing redirect URL from PhonePe');
+      }
+      
+      return {
+          redirectUrl: response.data.redirectUrl,
+          transactionId: response.data.transactionId
+      };
+
+  } catch (error: any) {
+      console.error('Payment Error:', {
+          message: error.message,
+          response: error.response?.data
+      });
+      throw new Error(error.response?.data?.error || 'Payment initiation failed');
+  }
+};
 // NEW FUNCTION: Create Order
 export const createOrder = async (orderData: any) => {
     try {
