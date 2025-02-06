@@ -120,7 +120,16 @@ export const getBookDetails = async (bookId: number): Promise<Book> => {
 };
 
 // Order Management
-export const placeOrder = async (cartItems: any[], shippingDetails: any) => {
+export const placeOrder = async (cartItems: Array<{ book_id: number; quantity: number; price: number }>, shippingDetails: {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+}) => {
   try {
     const response = await publicApi.post('/orders', {
       items: cartItems,
@@ -129,7 +138,7 @@ export const placeOrder = async (cartItems: any[], shippingDetails: any) => {
     return response.data;
   } catch (error) {
     console.error('Error placing order:', error);
-    throw new Error('Failed to place order');
+    throw error; // Throw the actual error for better error handling
   }
 };
 
@@ -145,7 +154,7 @@ export const getOrders = async () => {
 
 export const updateOrderStatus = async (orderId: number, status: string) => {
   try {
-    const response = await api.put(`/admin/orders/${orderId}/status`, { status });
+    const response = await publicApi.put(`/orders/${orderId}/status`, { status });
     return response.data;
   } catch (error) {
     console.error('Error updating order status:', error);
@@ -159,16 +168,64 @@ export const createPayment = async (paymentData: {
   firstname: string;
   email: string;
   phone: string;
-  cartItems: any[];
-  shippingAddress: any;
+  orderId: number;
 }) => {
   try {
-    console.log('Creating payment with data:', paymentData);
-    const response = await publicApi.post('/create-payment', paymentData);
-    console.log('Payment creation response:', response.data);
+    const response = await api.post('/create-payment', paymentData);
     return response.data;
   } catch (error) {
-    console.error('Error creating payment:', error);
+    console.error('Error creating PhonePe payment:', error);
+    throw error;
+  }
+};
+
+// NEW FUNCTION: Create Order
+export const createOrder = async (orderData: { shipping_address: string; items: { book_id: number; quantity: number; price: number; }[]; }) => {
+  try {
+    const response = await api.post('/orders', orderData);
+    return response.data; // Should return { orderId: ... }
+  } catch (error) {
+    console.error('Error creating order:', error);
+    throw new Error('Failed to create order');
+  }
+};
+
+export const getOrderDetails = async (orderId: string) => {
+  try {
+    const response = await publicApi.get(`/orders/${orderId}`);
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching order details:', error);
+    throw error; // Re-throw the error for the calling component to handle
+  }
+};
+
+export const addBook = async (bookData: Omit<Book, 'book_id'>) => {
+  try {
+    const response = await api.post('/admin/books', bookData);
+    return response.data;
+  } catch (error) {
+    console.error('Error adding book:', error);
+    throw new Error('Failed to add book');
+  }
+};
+
+export const getAllOrders = async () => {
+  try {
+    const response = await api.get('/admin/orders');
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching orders:', error);
+    throw error;
+  }
+};
+
+export const updateOrder = async (orderId: number, updatedOrder: any) => {
+  try {
+    const response = await api.put(`/admin/orders/${orderId}`, updatedOrder);
+    return response.data;
+  } catch (error) {
+    console.error('Error updating order:', error);
     throw error;
   }
 };

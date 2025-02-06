@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config';
-import { createPayment } from '../services/api';
+import { createPayment, createOrder } from '../services/api';
+import { useNavigate } from 'react-router-dom';
 
 interface CartItem {
-  id: string;
+  book_id: number;
   title: string;
   price: number;
   quantity: number;
@@ -41,6 +42,7 @@ interface CheckoutFormProps {
 }
 
 const CheckoutForm: React.FC<CheckoutFormProps> = ({ cart, onCheckoutComplete }) => {
+  const navigate = useNavigate();
   const [formData, setFormData] = useState<FormData>({
     firstName: '',
     lastName: '',
@@ -65,9 +67,9 @@ const CheckoutForm: React.FC<CheckoutFormProps> = ({ cart, onCheckoutComplete })
   useEffect(() => {
     // Load cart items
     const items = JSON.parse(localStorage.getItem('cart') || '[]');
-    const itemsWithIds = items.map((item: CartItem, index: number) => ({
+    const itemsWithIds = items.map((item: CartItem) => ({
       ...item,
-      id: item.id || `temp-${index}`,
+      book_id: item.book_id || null, // Ensure book_id is preserved
       price: Number(item.price)
     }));
     setCartItems(itemsWithIds);
@@ -89,62 +91,60 @@ const CheckoutForm: React.FC<CheckoutFormProps> = ({ cart, onCheckoutComplete })
     setError(null);
 
     try {
-      const shippingAddress = {
-        address: formData.address,
-        apartment: formData.apartment,
-        city: formData.city,
-        state: formData.state,
-        zipCode: formData.zipCode,
-        country: formData.country
+      // 1. CREATE ORDER FIRST
+      // Ensure all required fields are present
+      if (!cart.every(item => item.book_id)) {
+        throw new Error('Some items are missing book_id');
+      }
+
+      const orderData = {
+        items: cart.map(item => ({
+          book_id: item.book_id,
+          quantity: item.quantity,
+          price: item.price
+        })),
+        shipping_address: JSON.stringify({
+          firstName: formData.firstName,
+          lastName: formData.lastName,
+          email: formData.email,
+          phone: formData.phone,
+          address: formData.address,
+          city: formData.city,
+          state: formData.state,
+          zip: formData.zipCode
+        })
       };
 
-      const total = subtotal;
+      const orderResponse = await createOrder(orderData);
+      const orderId = orderResponse.orderId; // Get the order ID
 
-      const response = await createPayment({
-        amount: total,
-        productinfo: 'Books Purchase',
+      // 2. CREATE PAYMENT (pass orderId)
+      const paymentData = {
+        amount: cart.reduce((total, item) => total + item.price * item.quantity, 0),
+        productinfo: cart.map(item => item.title).join(', '),
         firstname: formData.firstName,
         email: formData.email,
         phone: formData.phone,
-        cartItems: cartItems,
-        shippingAddress: shippingAddress
-      });
+        orderId: orderId, // Pass the order ID to the payment gateway
+      };
 
-      const form = document.createElement('form');
-      form.method = 'POST';
-      form.action = 'https://secure.payu.in/_payment';
-      form.style.display = 'none';
+      const paymentResponse = await createPayment(paymentData);
 
-      Object.entries(response).forEach(([key, value]) => {
-        if (value !== undefined && value !== null) {
-          const input = document.createElement('input');
-          input.type = 'hidden';
-          input.name = key;
-          input.value = typeof value === 'object' ? JSON.stringify(value) : String(value);
-          form.appendChild(input);
-        }
-      });
+      if (paymentResponse.redirectUrl) {
+        window.location.href = paymentResponse.redirectUrl;
+      } else {
+        throw new Error('Payment initiation failed.');
+      }
 
-      console.log('Submitting form to PayU with data:', 
-        Object.fromEntries(
-          Object.entries(response)
-            .filter(([k]) => !['key', 'hash'].includes(k))
-            .map(([k, v]) => [k, v])
-        )
-      );
-
-      document.body.appendChild(form);
-      setLoading(true);
-      form.submit();
-    } catch (error: any) {
-      console.error('Error creating payment:', error);
-      setError(error.message || 'Failed to process payment');
+    } catch (err: any) {
+      setError(err.message || 'An error occurred during checkout.');
+    } finally {
       setLoading(false);
     }
   };
 
   const renderCartItem = (item: CartItem) => (
-    <div key={`cart-item-${item.id}`} className="flex items-center space-x-4">
+    <div key={`cart-item-${item.book_id}`} className="flex items-center space-x-4">
       {item.coverImage && (
         <img 
           src={item.coverImage} 

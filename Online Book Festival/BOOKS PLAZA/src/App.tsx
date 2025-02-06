@@ -12,6 +12,7 @@ import AboutUs from './components/AboutUs';
 import ContactUs from './components/ContactUs';
 import ReturnPolicy from './components/ReturnPolicy';
 import Terms from './components/Terms';
+import PaymentSuccess from './pages/PaymentSuccess';
 
 // PrivateRoute component (adjust as needed)
 const PrivateRoute = ({ children }: { children: React.ReactNode }) => {
@@ -133,24 +134,7 @@ function App() {
               <h1 className="text-3xl font-bold text-red-600 mb-4">Payment Failed</h1>
               <p className="text-gray-600">Sorry, your payment could not be processed. Please try again.</p>
             </div>} />
-            <Route path="/payment-success" element={
-              <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-                <div className="bg-white p-8 rounded-lg shadow-md max-w-md w-full">
-                  <div className="text-center">
-                    <h2 className="text-2xl font-bold text-green-600 mb-4">Payment Successful!</h2>
-                    <p className="text-gray-600 mb-4">
-                      Your order has been placed successfully. You will receive a confirmation email shortly.
-                    </p>
-                    <Link 
-                      to="/" 
-                      className="inline-block bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700"
-                    >
-                      Continue Shopping
-                    </Link>
-                  </div>
-                </div>
-              </div>
-            } />
+            <Route path="/payment-success" element={<PaymentSuccess />} />
             <Route path="/payment-failed" element={
               <div className="min-h-screen bg-gray-100 flex items-center justify-center">
                 <div className="bg-white p-8 rounded-lg shadow-md max-w-md w-full">

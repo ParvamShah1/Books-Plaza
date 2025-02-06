@@ -1,15 +1,16 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const session = require('express-session');
 const multer = require('multer');
 const path = require('path');
+const axios = require('axios');
 const { body, validationResult } = require('express-validator');
 const app = express();
 const port = process.env.PORT || 3001;
 const db = require('./db');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const session = require('express-session');
 const fs = require('fs');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
@@ -17,9 +18,9 @@ const crypto = require('crypto');
 // Load environment variables
 require('dotenv').config();
 
-// Validate PayU configuration
-if (!process.env.PAYU_MERCHANT_KEY || !process.env.PAYU_MERCHANT_SALT) {
-  console.error('PayU credentials are missing');
+// Validate PhonePe configuration
+if (!process.env.PHONEPE_MERCHANT_ID || !process.env.PHONEPE_SALT_KEY || !process.env.PHONEPE_SALT_INDEX) {
+  console.error('PhonePe credentials are missing');
   process.exit(1);
 }
 
@@ -39,13 +40,20 @@ app.use(cors(corsOptions));
 app.use(bodyParser.json());
 
 // Session configuration
+// Session store setup
+const MemoryStore = require('memorystore')(session);
+
 app.use(
   session({
-    secret: 'your_session_secret',
+    store: new MemoryStore({
+      checkPeriod: 86400000 // prune expired entries every 24h
+    }),
+    secret: process.env.SESSION_SECRET || 'your_session_secret',
     resave: false,
-    saveUninitialized: true,
+    saveUninitialized: false,
+    rolling: true,
     cookie: {
-      secure: false,
+      secure: false, // Set to true in production with HTTPS
       httpOnly: true,
       maxAge: 1000 * 60 * 60 * 24,
       sameSite: 'lax'
@@ -519,41 +527,90 @@ app.get('/api/books/:id', async (req, res) => {
 
 app.post('/api/orders', async (req, res) => {
   try {
-    const { cartItems, userDetails, shippingAddress } = req.body;
+    console.log('Received order request body:', JSON.stringify(req.body, null, 2));
+    
+    const { items, shipping_address } = req.body;
+    
+    if (!items || !Array.isArray(items)) {
+      return res.status(400).json({ error: 'Items must be an array' });
+    }
 
+    if (!shipping_address) {
+      return res.status(400).json({ error: 'Shipping address is required' });
+    }
+
+    const shipping = shipping_address ? JSON.parse(shipping_address) : null;
+    
+    console.log('Extracted items:', items);
+    console.log('Extracted shipping:', shipping);
+    
+    // Validate items structure
+    for (const item of items) {
+      if (!item.book_id || !item.quantity || !item.price) {
+        return res.status(400).json({ 
+          error: 'Invalid item structure', 
+          details: `Item must have book_id, quantity, and price. Got: ${JSON.stringify(item)}`
+        });
+      }
+    }
+
+    // Calculate total amount from items
+    const totalAmount = items.reduce((total, item) => total + (item.price * item.quantity), 0);
+
+    // Generate a temporary transaction ID
+    const tempTransactionId = 'TEMP_' + Date.now() + '_' + Math.random().toString(36).substring(7);
+    
     // Store order details in the database
     const orderResult = await db.query(
-      'INSERT INTO orders (order_date, total_amount, payment_status, email) VALUES ($1, $2, $3, $4) RETURNING *',
-      [new Date(), calculateTotalAmount(cartItems), 'pending', userDetails.email]
+      'INSERT INTO orders (payment_status, total_amount, shipping_address, transaction_id, customer_name, customer_email, customer_phone, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+      [
+        'pending',
+        totalAmount,
+        JSON.stringify(shipping),
+        tempTransactionId,
+        shipping.firstName + ' ' + shipping.lastName,
+        shipping.email,
+        shipping.phone,
+        new Date()
+      ]
     );
-    const orderId = orderResult.rows.order_id;
+
+    const orderId = orderResult.rows[0].order_id;
 
     // Store order items
-    for (const item of cartItems) {
+    for (const item of items) {
       await db.query(
         'INSERT INTO order_items (order_id, book_id, quantity, price) VALUES ($1, $2, $3, $4)',
         [orderId, item.book_id, item.quantity, item.price]
       );
     }
 
-    // Update book stock (if applicable) - Implement your logic here
-
-    // Send confirmation email
-    sendConfirmationEmail(userDetails.email, orderId, cartItems, shippingAddress);
-
-    res.status(201).json({ message: 'Order placed successfully', orderId });
+    res.status(201).json({ 
+      message: 'Order placed successfully', 
+      orderId,
+      order: orderResult.rows[0]
+    });
   } catch (err) {
     console.error('Error placing order:', err);
     res.status(500).json({ error: 'Error placing order' });
   }
 });
 
+// Debug middleware for sessions
+app.use((req, res, next) => {
+  console.log('Session Debug:', {
+    sessionID: req.sessionID,
+    session: req.session
+  });
+  next();
+});
+
 app.post('/api/create-payment', async (req, res) => {
-  // Validate PayU configuration
-  if (!process.env.PAYU_MERCHANT_KEY || !process.env.PAYU_MERCHANT_SALT) {
+  // Validate PhonePe configuration
+  if (!process.env.PHONEPE_MERCHANT_ID || !process.env.PHONEPE_SALT_KEY || !process.env.PHONEPE_SALT_INDEX) {
     return res.status(500).json({
       error: 'Payment configuration error',
-      details: 'PayU merchant key or salt is missing'
+      details: 'PhonePe credentials are missing'
     });
   }
   console.log('Received payment request:', {
@@ -572,103 +629,95 @@ app.post('/api/create-payment', async (req, res) => {
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
     const backendUrl = process.env.API_URL || 'http://localhost:3001';
 
-    // Prepare UDF fields with proper encoding
-    const udf1 = frontendUrl;
-    const udf2 = JSON.stringify(cartItems || []);
-    const udf3 = JSON.stringify(shippingAddress || {});
-    const udf4 = '';
-    const udf5 = '';
-
-    // Generate hash
-    const hashString = [
-      process.env.PAYU_MERCHANT_KEY,
-      txnid,
-      amount.toString(),
-      productinfo,
+    // Store customer details in session
+    const customerDetails = {
       firstname,
       email,
-      udf1,
-      udf2,
-      udf3,
-      udf4,
-      udf5,
-      '',  // empty string for unused fields
-      '',
-      '',
-      '',
-      '',
-      '',
-      process.env.PAYU_MERCHANT_SALT
-    ].join('|');
-    
-    const hash = crypto.createHash('sha512').update(hashString).digest('hex');
-
-    // Log hash string for debugging (excluding sensitive data)
-    console.log('Hash generated for transaction:', txnid);
-    console.log('Payment data prepared:', {
-      txnid,
-      amount: amount.toString(),
-      productinfo,
-      firstname,
-      hash: hash.substring(0, 10) + '...' // Show only first 10 chars of hash
-    });
-
-    // Prepare payment data
-    const paymentData = {
-      key: process.env.PAYU_MERCHANT_KEY,
-      txnid: txnid,
-      amount: amount.toString(),
-      productinfo: productinfo,
-      firstname: firstname,
-      email: email,
-      phone: phone,
-      surl: `${backendUrl}/api/payment-success`,
-      furl: `${backendUrl}/api/payment-failure`,
-      curl: `${backendUrl}/api/payment-cancel`,
-      service_provider: 'payu_paisa',
-      hash: hash,
-      udf1: udf1,
-      udf2: udf2,
-      udf3: udf3,
-      udf4: udf4,
-      udf5: udf5,
-      lastname: '',
-      address1: shippingAddress.address || '',
-      address2: shippingAddress.apartment || '',
-      city: shippingAddress.city || '',
-      state: shippingAddress.state || '',
-      country: shippingAddress.country || '',
-      zipcode: shippingAddress.zipCode || '',
-      pg: 'CC',
-      bankcode: 'CC',
-      ccnum: '', // Leave empty, will be filled by PayU
-      ccname: '', // Leave empty, will be filled by PayU
-      ccvv: '', // Leave empty, will be filled by PayU
-      ccexpmon: '', // Leave empty, will be filled by PayU
-      ccexpyr: '', // Leave empty, will be filled by PayU
-      enforce_paymethod: 'cc',
-      api_version: '1',
-      shipping_firstname: firstname,
-      shipping_lastname: '',
-      shipping_address1: shippingAddress.address || '',
-      shipping_address2: shippingAddress.apartment || '',
-      shipping_city: shippingAddress.city || '',
-      shipping_state: shippingAddress.state || '',
-      shipping_country: shippingAddress.country || '',
-      shipping_zipcode: shippingAddress.zipCode || '',
-      shipping_phone: phone,
-      offer_key: '',
-      debug: '1'
+      phone,
+      amount,
+      cartItems: cartItems || [],
+      shippingAddress: shippingAddress || {}
     };
 
+    // Store in session
+    req.session.customerDetails = req.session.customerDetails || {};
+    req.session.customerDetails[txnid] = customerDetails;
+    
+    // Force session save
+    await new Promise((resolve, reject) => {
+      req.session.save((err) => {
+        if (err) {
+          console.error('Error saving session:', err);
+          reject(err);
+        } else {
+          console.log('Session saved successfully');
+          resolve();
+        }
+      });
+    });
 
+    console.log('Session after save:', {
+      sessionID: req.sessionID,
+      hasCustomerDetails: !!req.session.customerDetails,
+      storedTxnId: txnid,
+      allTxnIds: Object.keys(req.session.customerDetails || {})
+    });
 
-    // Final verification of payment data
-    if (!paymentData.hash || !paymentData.key) {
-      throw new Error('Payment hash or key is missing');
+    // Prepare payment data for PhonePe
+    const paymentData = {
+      merchantId: process.env.PHONEPE_MERCHANT_ID,
+      merchantTransactionId: txnid,
+      amount: amount * 100, // Convert to paise
+      redirectUrl: `${backendUrl}/api/payment-success?merchantTransactionId=${txnid}`,
+      redirectMode: 'GET',
+      callbackUrl: `${backendUrl}/api/payment-callback`,
+      merchantUserId: email.replace(/[^a-zA-Z0-9]/g, ''), // Clean email for merchantUserId
+      mobileNumber: phone.replace(/[^0-9]/g, ''), // Clean phone number
+      paymentInstrument: {
+        type: 'PAY_PAGE'
+      }
+    };
+
+    // Base64 encode the request body
+    const base64Body = Buffer.from(JSON.stringify(paymentData)).toString('base64');
+    
+    // Generate x-verify for PhonePe
+    const dataToHash = base64Body + '/pg/v1/pay' + process.env.PHONEPE_SALT_KEY;
+    const xVerify = crypto.createHash('sha256')
+      .update(dataToHash)
+      .digest('hex') + '###' + process.env.PHONEPE_SALT_INDEX;
+
+    console.log('Debug - Payment Request:', {
+      merchantId: process.env.PHONEPE_MERCHANT_ID,
+      base64Body: base64Body.substring(0, 50) + '...',
+      xVerify: xVerify.substring(0, 50) + '...',
+      saltKey: process.env.PHONEPE_SALT_KEY.substring(0, 10) + '...',
+      saltIndex: process.env.PHONEPE_SALT_INDEX
+    });
+
+    // Make request to PhonePe API
+    const phonepeResponse = await axios.post(
+      'https://api-preprod.phonepe.com/apis/pg-sandbox/pg/v1/pay',
+      {
+        request: base64Body
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-VERIFY': xVerify,
+          'X-MERCHANT-ID': process.env.PHONEPE_MERCHANT_ID
+        }
+      }
+    );
+
+    console.log('PhonePe response:', phonepeResponse.data);
+
+    if (phonepeResponse.data.success) {
+      const redirectUrl = phonepeResponse.data.data.instrumentResponse.redirectInfo.url;
+      res.json({ redirectUrl });
+    } else {
+      throw new Error('Failed to initialize PhonePe payment');
     }
-
-    res.json(paymentData);
   } catch (error) {
     console.error('Error creating payment:', {
       message: error.message,
@@ -682,93 +731,183 @@ app.post('/api/create-payment', async (req, res) => {
   }
 });
 
-// Payment success handler
-app.post('/api/payment-success', async (req, res) => {
+// PhonePe callback handler
+app.post('/api/payment-callback', async (req, res) => {
   try {
-    console.log('Payment success callback received:', {
-      ...req.body,
-      key: '***',
-      hash: '***'
+    console.log('PhonePe callback received:', {
+      body: req.body,
+      headers: req.headers
     });
 
-    const {
-      txnid, status, amount, productinfo, firstname, email,
-      mihpayid, udf1, udf2, udf3, udf4, udf5, hash
-    } = req.body;
+    const { merchantId, merchantTransactionId, transactionId, amount, responseCode } = req.body;
 
-    const frontendUrl = udf1 || process.env.FRONTEND_URL || 'http://localhost:3000';
+    // Verify the callback using X-VERIFY header
+    const base64Body = Buffer.from(JSON.stringify(req.body)).toString('base64');
+    const dataToHash = base64Body + '/pg/v1/status' + process.env.PHONEPE_SALT_KEY;
+    const expectedXVerify = crypto.createHash('sha256')
+      .update(dataToHash)
+      .digest('hex') + '###' + process.env.PHONEPE_SALT_INDEX;
 
-    // Verify response hash
-    const hashSequence = [
-      process.env.PAYU_MERCHANT_SALT,
-      status,
-      '', '', '', '', '',
-      udf5 || '',
-      udf4 || '',
-      udf3 || '',
-      udf2 || '',
-      udf1 || '',
-      email,
-      firstname,
-      productinfo,
-      amount,
-      txnid,
-      process.env.PAYU_MERCHANT_KEY
-    ];
-
-    const hashString = hashSequence.join('|');
-    console.log('Verifying hash with string:', hashString);
-    const calculatedHash = crypto.createHash('sha512').update(hashString).digest('hex');
-
-    if (calculatedHash.toLowerCase() !== hash.toLowerCase()) {
-      console.error('Hash verification failed');
-      console.log('Calculated hash:', calculatedHash);
-      console.log('Received hash:', hash);
-      return res.redirect(`${frontendUrl}/payment-failed?error=hash_mismatch`);
+    if (req.headers['x-verify'] !== expectedXVerify) {
+      throw new Error('Invalid callback signature');
     }
 
-    // Parse cart items and shipping address
-    let cartItems = [];
-    let shippingAddress = {};
-    try {
-      cartItems = JSON.parse(udf2 || '[]');
-      shippingAddress = JSON.parse(udf3 || '{}');
-    } catch (error) {
-      console.error('Error parsing UDF fields:', error);
-    }
+    // Check transaction status with PhonePe
+    const statusCheckResponse = await axios.post(
+      'https://api-preprod.phonepe.com/apis/pg-sandbox/pg/v1/status',
+      {
+        merchantId: process.env.PHONEPE_MERCHANT_ID,
+        merchantTransactionId: merchantTransactionId
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-VERIFY': expectedXVerify,
+          'X-MERCHANT-ID': process.env.PHONEPE_MERCHANT_ID
+        }
+      }
+    );
 
-    // Save order to database
+    console.log('PhonePe status check response:', statusCheckResponse.data);
+
+    const paymentSuccessful = statusCheckResponse.data.success && 
+                             statusCheckResponse.data.code === 'PAYMENT_SUCCESS';
+
+    // Update order status in database
     await saveOrder({
-      txnid,
-      mihpayid,
-      firstname,
-      email,
-      phone: req.body.phone,
-      address: shippingAddress,
-      amount: parseFloat(amount),
-      items: cartItems,
-      payment_status: status
+      transactionId: merchantTransactionId,
+      status: paymentSuccessful ? 'success' : 'failed',
+      amount: amount / 100, // Convert from paise to rupees
+      paymentResponse: statusCheckResponse.data
     });
 
-    // Redirect to frontend success page
-    res.redirect(`${frontendUrl}/payment-success?orderId=${txnid}`);
-  } catch (error) {
-    console.error('Error processing payment success:', error);
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-    res.redirect(`${frontendUrl}/payment-failed?error=server_error`);
+    const redirectUrl = paymentSuccessful
+      ? `${frontendUrl}/payment-success`
+      : `${frontendUrl}/payment-failed?error=Payment%20failed`;
+
+    res.redirect(redirectUrl);
+  } catch (error) {
+    console.error('Error processing payment callback:', error);
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    res.redirect(`${frontendUrl}/payment-failed?error=${encodeURIComponent(error.message)}`);
   }
 });
 
-// Payment cancel handler
-app.post('/api/payment-cancel', (req, res) => {
-  console.log('Payment cancelled:', req.body);
-  const frontendUrl = req.body.udf1 || process.env.FRONTEND_URL || 'http://localhost:3000';
-  res.redirect(`${frontendUrl}/payment-failed?error=cancelled`);
+// Payment success handler (handles both GET and POST)
+app.all('/api/payment-success', async (req, res) => {
+  try {
+    console.log('Payment success received:', {
+      method: req.method,
+      body: req.body,
+      query: req.query,
+      // session: req.session
+    });
+
+    let savedOrder = null;
+    const merchantTransactionId = req.body.merchantTransactionId || req.query.merchantTransactionId;
+    console.log('Looking for transaction:', merchantTransactionId);
+    console.log('Available sessions:', Object.keys(req.session || {}));
+
+    if (!merchantTransactionId) {
+      console.error('No transaction ID found in request');
+      return res.status(400).json({ error: 'No transaction ID found' });
+    }
+
+    // First check if order already exists in database
+    try {
+      const existingOrderQuery = 'SELECT * FROM orders WHERE transaction_id = $1';
+      const existingOrderResult = await db.query(existingOrderQuery, [merchantTransactionId]);
+      
+      if (existingOrderResult.rows.length > 0) {
+        const order = existingOrderResult.rows[0];
+        // Get order items
+        const itemsQuery = 'SELECT * FROM order_items WHERE order_id = $1';
+        const itemsResult = await db.query(itemsQuery, [order.order_id]);
+        
+        const completeOrder = {
+          orderId: order.order_id,
+          transactionId: order.transaction_id,
+          paymentId: order.payment_id,
+          amount: order.total_amount,
+          customerName: order.customer_name,
+          customerEmail: order.customer_email,
+          customerPhone: order.customer_phone,
+          shippingAddress: order.shipping_address,
+          items: itemsResult.rows,
+          status: order.payment_status,
+          createdAt: order.created_at
+        };
+
+        if (req.method === 'GET') {
+          return res.json({ order: completeOrder });
+        } else {
+          return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?order=${encodeURIComponent(JSON.stringify(completeOrder))}`);
+        }
+      }
+    } catch (error) {
+      console.error('Error checking existing order:', error);
+      if (req.method === 'GET') {
+        return res.status(500).json({ error: 'Error checking order status' });
+      } else {
+        return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?error=Error checking order status`);
+      }
+    }
+
+    
+
+        if (req.method === 'GET') {
+          return res.json({ order: savedOrder });
+        } else {
+          return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?order=${encodeURIComponent(JSON.stringify(savedOrder))}`);
+        }
+      } catch (saveError) {
+        console.error('Error saving order:', saveError);
+        console.error('Error details:', saveError.message);
+        console.error('Error stack:', saveError.stack);
+        if (req.method === 'GET') {
+          return res.status(500).json({ error: 'Error saving order' });
+        } else {
+          return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?error=Error saving order`);
+        }
+      }
+    
+
+  // } catch (error) {
+  //   console.error('Unhandled error in payment success handler:', error);
+  //   if (req.method === 'GET') {
+  //     return res.status(500).json({ error: 'Internal server error' });
+  //   } else {
+  //     return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?error=Internal server error`);
+  //   }
+  // }
+
 });
 
-// Function to calculate total amount (example)
-function calculateTotalAmount(cartItems) {
-  return cartItems.reduce((total, item) => total + item.price * item.quantity, 0);
+// Payment failure handler (handles both GET and POST)
+app.all('/api/payment-failed', async (req, res) => {
+  console.log('Payment failed:', {
+    method: req.method,
+    body: req.body,
+    query: req.query
+  });
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  res.redirect(`${frontendUrl}/payment-failed`);
+});
+
+
+
+// Function to calculate total amount
+function calculateTotalAmount(items) {
+  if (!Array.isArray(items)) {
+    throw new Error('Items must be an array');
+  }
+  return items.reduce((total, item) => {
+    if (!item.price || !item.quantity) {
+      throw new Error('Each item must have price and quantity');
+    }
+    return total + (item.price * item.quantity);
+  }, 0);
 }
 
 // Function to send confirmation email (example - using Nodemailer)
@@ -801,7 +940,30 @@ async function sendConfirmationEmail(email, orderId, cartItems, shippingAddress)
 // Save order to database
 async function saveOrder(orderData) {
   console.log('Saving order with data:', JSON.stringify(orderData, null, 2));
-  const { txnid, mihpayid, firstname, email, phone, address, amount, items, payment_status } = orderData;
+  const { 
+    payment_status,
+    total_amount,
+    shipping_address,
+    transaction_id,
+    payment_id,
+    customer_name,
+    customer_email,
+    customer_phone,
+    items 
+  } = orderData;
+  
+  console.log('Destructured order data:', {
+    payment_status,
+    total_amount,
+    shipping_address,
+    transaction_id,
+    payment_id,
+    customer_name,
+    customer_email,
+    customer_phone,
+    items
+  });
+
   const client = await db.connect();
   
   try {
@@ -812,40 +974,64 @@ async function saveOrder(orderData) {
     const orderQuery = `
       INSERT INTO orders (
         payment_status, total_amount, shipping_address, 
-        transaction_id, payment_id, customer_name, customer_email, customer_phone
+        transaction_id, payment_id, customer_name, customer_email, customer_phone,
+        created_at
       ) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      RETURNING order_id`;
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+      RETURNING order_id, created_at`;
     
     const orderValues = [
-      payment_status || 'Completed',
-      amount,
-      JSON.stringify(address),
-      txnid,
-      mihpayid,
-      firstname,
-      email,
-      phone
+      payment_status,
+      total_amount,
+      JSON.stringify(shipping_address),
+      transaction_id,
+      payment_id,
+      customer_name,
+      customer_email,
+      customer_phone
     ];
 
     console.log('Executing order query with values:', JSON.stringify(orderValues, null, 2));
     const orderResult = await client.query(orderQuery, orderValues);
-    const orderId = orderResult.rows[0].order_id;
-    console.log('Order created with ID:', orderId);
+    const order = orderResult.rows[0];
+    console.log('Order created:', order);
 
     // Insert order items
     console.log('Inserting order items:', JSON.stringify(items, null, 2));
+    const savedItems = [];
     for (const item of items) {
       const itemQuery = `
         INSERT INTO order_items (order_id, book_id, quantity, price)
-        VALUES ($1, $2, $3, $4)`;
-      await client.query(itemQuery, [orderId, item.id, item.quantity, item.price]);
-      console.log('Inserted item:', item.id);
+        VALUES ($1, $2, $3, $4)
+        RETURNING *`;
+      console.log('Inserting item with values:', {
+        order_id: order.order_id,
+        book_id: item.book_id,
+        quantity: item.quantity,
+        price: item.price
+      });
+      const itemResult = await client.query(itemQuery, [order.order_id, item.book_id, item.quantity, item.price]);
+      savedItems.push(itemResult.rows[0]);
+      console.log('Inserted item:', itemResult.rows[0]);
     }
 
     await client.query('COMMIT');
     console.log('Transaction committed successfully');
-    return orderId;
+
+    // Return complete order details
+    return {
+      orderId: order.order_id,
+      createdAt: order.created_at,
+      transactionId: txnid,
+      paymentId: mihpayid,
+      amount: amount,
+      customerName: firstname,
+      customerEmail: email,
+      customerPhone: phone,
+      shippingAddress: address,
+      items: savedItems,
+      status: payment_status
+    };
   } catch (error) {
     console.error('Error saving order:', error);
     console.error('Error details:', error.message);
@@ -1026,6 +1212,68 @@ app.put('/api/admin/orders/:orderId/status', checkAdminCode, async (req, res) =>
       return res.status(404).json({ error: 'Order not found' });
     }
 
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating order status:', error);
+    res.status(500).json({ error: 'Failed to update order status' });
+  }
+});
+
+// Get order details by ID
+app.get('/api/orders/:orderId', async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    
+    // Get order details
+    const orderQuery = 'SELECT * FROM orders WHERE order_id = $1';
+    const orderResult = await db.query(orderQuery, [orderId]);
+    
+    if (orderResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+    
+    const order = orderResult.rows[0];
+    
+    // Get order items
+    const itemsQuery = `
+      SELECT oi.*, b.title 
+      FROM order_items oi 
+      JOIN books b ON oi.book_id = b.book_id 
+      WHERE oi.order_id = $1
+    `;
+    const itemsResult = await db.query(itemsQuery, [orderId]);
+    
+    const completeOrder = {
+      order_id: order.order_id,
+      shipping_address: order.shipping_address,
+      order_items: itemsResult.rows,
+      total_amount: order.total_amount,
+      status: order.payment_status,
+      created_at: order.created_at
+    };
+    
+    res.json(completeOrder);
+  } catch (error) {
+    console.error('Error fetching order details:', error);
+    res.status(500).json({ error: 'Failed to fetch order details' });
+  }
+});
+
+// Update order status
+app.put('/api/orders/:orderId/status', async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { status } = req.body;
+    
+    const result = await db.query(
+      'UPDATE orders SET payment_status = $1 WHERE order_id = $2 RETURNING *',
+      [status, orderId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+    
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error updating order status:', error);
