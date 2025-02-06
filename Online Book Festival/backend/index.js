@@ -30,14 +30,13 @@ const PAYU_BASE_URL = process.env.PAYU_MODE === 'production'
 
 const API_URL = process.env.API_URL || 'http://localhost:3001';
 
-// CORS options
-const corsOptions = {
-  origin: true, // This allows all origins
-  credentials: true // Important for cookies
-};
+// CORS configuration
+app.use(cors({
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    credentials: true
+}));
 
-app.use(cors(corsOptions));
-app.use(bodyParser.json());
+app.use(express.json());
 
 // Session configuration
 // Session store setup
@@ -525,75 +524,109 @@ app.get('/api/books/:id', async (req, res) => {
   }
 });
 
+// Create order endpoint
 app.post('/api/orders', async (req, res) => {
-  try {
-    console.log('Received order request body:', JSON.stringify(req.body, null, 2));
-    
-    const { items, shipping_address } = req.body;
-    
-    if (!items || !Array.isArray(items)) {
-      return res.status(400).json({ error: 'Items must be an array' });
-    }
+    try {
+        console.log('Creating order with data:', req.body);
+        const { 
+            items, 
+            shipping_address, 
+            customer_name, 
+            customer_email, 
+            customer_phone,
+            total_amount 
+        } = req.body;
 
-    if (!shipping_address) {
-      return res.status(400).json({ error: 'Shipping address is required' });
-    }
+        // Validate required fields
+        if (!customer_email || !customer_name || !customer_phone) {
+            return res.status(400).json({
+                error: 'Missing required customer details',
+                details: 'Email, name, and phone are required'
+            });
+        }
 
-    const shipping = shipping_address ? JSON.parse(shipping_address) : null;
-    
-    console.log('Extracted items:', items);
-    console.log('Extracted shipping:', shipping);
-    
-    // Validate items structure
-    for (const item of items) {
-      if (!item.book_id || !item.quantity || !item.price) {
-        return res.status(400).json({ 
-          error: 'Invalid item structure', 
-          details: `Item must have book_id, quantity, and price. Got: ${JSON.stringify(item)}`
+        // Generate a unique transaction ID
+        const transactionId = `TXN_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+        // Begin transaction
+        await db.query('BEGIN');
+
+        // Insert order with all required fields
+        const orderQuery = `
+            INSERT INTO orders (
+                payment_status,
+                total_amount,
+                shipping_address,
+                transaction_id,
+                customer_name,
+                customer_email,
+                customer_phone
+            ) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7) 
+            RETURNING *
+        `;
+
+        const orderValues = [
+            'pending',                    // payment_status
+            total_amount,                 // total_amount
+            JSON.stringify(shipping_address), // shipping_address as JSONB
+            transactionId,               // transaction_id
+            customer_name,                // customer_name
+            customer_email,               // customer_email
+            customer_phone                // customer_phone
+        ];
+
+        console.log('Executing order query with values:', orderValues);
+
+        const orderResult = await db.query(orderQuery, orderValues);
+        const order = orderResult.rows[0];
+        
+        console.log('Created order:', order);
+
+        // Insert order items
+        for (const item of items) {
+            await db.query(
+                `INSERT INTO order_items (
+                    order_id,
+                    book_id,
+                    quantity,
+                    price
+                ) VALUES ($1, $2, $3, $4)`,
+                [order.order_id, item.book_id, item.quantity, parseFloat(item.price)]
+            );
+        }
+
+        await db.query('COMMIT');
+
+        // Return the complete order data
+        const completeOrderQuery = `
+            SELECT o.*,
+                json_agg(
+                    json_build_object(
+                        'book_id', oi.book_id,
+                        'quantity', oi.quantity,
+                        'price', oi.price,
+                        'title', b.title
+                    )
+                ) as order_items
+            FROM orders o
+            LEFT JOIN order_items oi ON o.order_id = oi.order_id
+            LEFT JOIN books b ON oi.book_id = b.book_id
+            WHERE o.order_id = $1
+            GROUP BY o.order_id`;
+
+        const completeOrder = await db.query(completeOrderQuery, [order.order_id]);
+        
+        res.json(completeOrder.rows[0]);
+
+    } catch (error) {
+        await db.query('ROLLBACK');
+        console.error('Error creating order:', error);
+        res.status(500).json({ 
+            error: 'Failed to create order',
+            details: error.message
         });
-      }
     }
-
-    // Calculate total amount from items
-    const totalAmount = items.reduce((total, item) => total + (item.price * item.quantity), 0);
-
-    // Generate a temporary transaction ID
-    const tempTransactionId = 'TEMP_' + Date.now() + '_' + Math.random().toString(36).substring(7);
-    
-    // Store order details in the database
-    const orderResult = await db.query(
-      'INSERT INTO orders (payment_status, total_amount, shipping_address, transaction_id, customer_name, customer_email, customer_phone, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-      [
-        'pending',
-        totalAmount,
-        JSON.stringify(shipping),
-        tempTransactionId,
-        shipping.firstName + ' ' + shipping.lastName,
-        shipping.email,
-        shipping.phone,
-        new Date()
-      ]
-    );
-
-    const orderId = orderResult.rows[0].order_id;
-
-    // Store order items
-    for (const item of items) {
-      await db.query(
-        'INSERT INTO order_items (order_id, book_id, quantity, price) VALUES ($1, $2, $3, $4)',
-        [orderId, item.book_id, item.quantity, item.price]
-      );
-    }
-
-    res.status(201).json({ 
-      message: 'Order placed successfully', 
-      orderId,
-      order: orderResult.rows[0]
-    });
-  } catch (err) {
-    console.error('Error placing order:', err);
-    res.status(500).json({ error: 'Error placing order' });
-  }
 });
 
 // Debug middleware for sessions
@@ -605,193 +638,203 @@ app.use((req, res, next) => {
   next();
 });
 
+// PhonePe Production configuration
+const MERCHANT_ID = 'SU2502061144102605234710';
+const SALT_KEY = '4d439002-4d98-4ac0-b49d-cc3600fe5a0b';
+const SALT_INDEX = '1';
+const CLIENT_ID = process.env.PHONEPE_CLIENT_ID;        // Add to your .env file
+const CLIENT_SECRET = process.env.PHONEPE_CLIENT_SECRET; // Add to your .env file
+const AUTH_URL = 'https://api.phonepe.com/apis/identity-manager/token';
+const PG_BASE_URL = 'https://api.phonepe.com/apis/pg';
+
+// Function to get auth token
+async function getPhonePeAuthToken() {
+    try {
+        const response = await axios.post(AUTH_URL, {
+            clientId: CLIENT_ID,
+            clientSecret: CLIENT_SECRET
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+        });
+
+        if (response.data && response.data.access_token) {
+            return response.data.access_token;
+        }
+        throw new Error('Failed to get auth token');
+    } catch (error) {
+        console.error('Auth token error:', error);
+        throw error;
+    }
+}
+
+// Create payment endpoint
 app.post('/api/create-payment', async (req, res) => {
-  // Validate PhonePe configuration
-  if (!process.env.PHONEPE_MERCHANT_ID || !process.env.PHONEPE_SALT_KEY || !process.env.PHONEPE_SALT_INDEX) {
-    return res.status(500).json({
-      error: 'Payment configuration error',
-      details: 'PhonePe credentials are missing'
-    });
-  }
-  console.log('Received payment request:', {
-    ...req.body,
-    email: '***@***', // Hide sensitive data
-    phone: '***'
-  });
-  try {
-    const { amount, productinfo, firstname, email, phone, cartItems, shippingAddress } = req.body;
-    
-    if (!amount || !productinfo || !firstname || !email || !phone) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
+    try {
+        const { orderId, amount, customerName, customerEmail, customerPhone } = req.body;
+        console.log('Creating payment for order:', { orderId, amount, customerName });
 
-    const txnid = 'TXN_' + Date.now();
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-    const backendUrl = process.env.API_URL || 'http://localhost:3001';
+        // Get auth token first
+        const authToken = await getPhonePeAuthToken();
+        console.log('Got auth token');
 
-    // Store customer details in session
-    const customerDetails = {
-      firstname,
-      email,
-      phone,
-      amount,
-      cartItems: cartItems || [],
-      shippingAddress: shippingAddress || {}
-    };
+        // Generate a unique transaction ID
+        const merchantTransactionId = `MT${Date.now()}`;
 
-    // Store in session
-    req.session.customerDetails = req.session.customerDetails || {};
-    req.session.customerDetails[txnid] = customerDetails;
-    
-    // Force session save
-    await new Promise((resolve, reject) => {
-      req.session.save((err) => {
-        if (err) {
-          console.error('Error saving session:', err);
-          reject(err);
+        // Create PhonePe payment payload
+        const payload = {
+            merchantId: MERCHANT_ID,
+            merchantTransactionId: merchantTransactionId,
+            merchantUserId: `MUID${orderId}`,
+            amount: Math.round(parseFloat(amount) * 100),
+            redirectUrl: `${process.env.BACKEND_URL}/api/payment/phonepe-callback`,
+            redirectMode: "POST",
+            callbackUrl: `${process.env.BACKEND_URL}/api/payment/phonepe-callback`,
+            mobileNumber: customerPhone.replace(/\D/g, '').slice(-10),
+            paymentInstrument: {
+                type: "PAY_PAGE"
+            }
+        };
+
+        // Create Base64 encoded payload
+        const base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64');
+
+        // Create checksum
+        const string = base64Payload + "/v1/payment" + SALT_KEY;
+        const sha256 = crypto.createHash('sha256').update(string).digest('hex');
+        const checksum = `${sha256}###${SALT_INDEX}`;
+
+        const response = await axios({
+            method: 'post',
+            url: `${PG_BASE_URL}/v1/payment`,
+            data: {
+                request: base64Payload
+            },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-VERIFY': checksum,
+                'X-MERCHANT-ID': MERCHANT_ID,
+                'Authorization': `Bearer ${authToken}`,
+                'Accept': 'application/json'
+            }
+        });
+
+        console.log('PhonePe response:', response.data);
+
+        if (response.data.success) {
+            await db.query(
+                'UPDATE orders SET transaction_id = $1, payment_status = $2 WHERE order_id = $3',
+                [merchantTransactionId, 'pending', orderId]
+            );
+
+            res.json({ 
+                redirectUrl: response.data.data.instrumentResponse.redirectInfo.url,
+                status: 'success',
+                orderId: orderId,
+                transactionId: merchantTransactionId
+            });
         } else {
-          console.log('Session saved successfully');
-          resolve();
+            throw new Error(response.data.message || 'Payment creation failed');
         }
-      });
-    });
 
-    console.log('Session after save:', {
-      sessionID: req.sessionID,
-      hasCustomerDetails: !!req.session.customerDetails,
-      storedTxnId: txnid,
-      allTxnIds: Object.keys(req.session.customerDetails || {})
-    });
-
-    // Prepare payment data for PhonePe
-    const paymentData = {
-      merchantId: process.env.PHONEPE_MERCHANT_ID,
-      merchantTransactionId: txnid,
-      amount: amount * 100, // Convert to paise
-      redirectUrl: `${backendUrl}/api/payment-success?merchantTransactionId=${txnid}`,
-      redirectMode: 'GET',
-      callbackUrl: `${backendUrl}/api/payment-callback`,
-      merchantUserId: email.replace(/[^a-zA-Z0-9]/g, ''), // Clean email for merchantUserId
-      mobileNumber: phone.replace(/[^0-9]/g, ''), // Clean phone number
-      paymentInstrument: {
-        type: 'PAY_PAGE'
-      }
-    };
-
-    // Base64 encode the request body
-    const base64Body = Buffer.from(JSON.stringify(paymentData)).toString('base64');
-    
-    // Generate x-verify for PhonePe
-    const dataToHash = base64Body + '/pg/v1/pay' + process.env.PHONEPE_SALT_KEY;
-    const xVerify = crypto.createHash('sha256')
-      .update(dataToHash)
-      .digest('hex') + '###' + process.env.PHONEPE_SALT_INDEX;
-
-    console.log('Debug - Payment Request:', {
-      merchantId: process.env.PHONEPE_MERCHANT_ID,
-      base64Body: base64Body.substring(0, 50) + '...',
-      xVerify: xVerify.substring(0, 50) + '...',
-      saltKey: process.env.PHONEPE_SALT_KEY.substring(0, 10) + '...',
-      saltIndex: process.env.PHONEPE_SALT_INDEX
-    });
-
-    // Make request to PhonePe API
-    const phonepeResponse = await axios.post(
-      'https://api-preprod.phonepe.com/apis/pg-sandbox/pg/v1/pay',
-      {
-        request: base64Body
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'X-VERIFY': xVerify,
-          'X-MERCHANT-ID': process.env.PHONEPE_MERCHANT_ID
-        }
-      }
-    );
-
-    console.log('PhonePe response:', phonepeResponse.data);
-
-    if (phonepeResponse.data.success) {
-      const redirectUrl = phonepeResponse.data.data.instrumentResponse.redirectInfo.url;
-      res.json({ redirectUrl });
-    } else {
-      throw new Error('Failed to initialize PhonePe payment');
+    } catch (error) {
+        console.error('Payment creation error:', {
+            message: error.message,
+            response: error.response?.data,
+            status: error.response?.status
+        });
+        
+        res.status(500).json({ 
+            error: 'Failed to create payment',
+            message: error.response?.data?.message || error.message,
+            details: error.response?.data
+        });
     }
-  } catch (error) {
-    console.error('Error creating payment:', {
-      message: error.message,
-      stack: error.stack,
-      data: error.response?.data
-    });
-    res.status(500).json({
-      error: 'Failed to create payment',
-      details: error.message
-    });
-  }
 });
 
-// PhonePe callback handler
-app.post('/api/payment-callback', async (req, res) => {
-  try {
-    console.log('PhonePe callback received:', {
-      body: req.body,
-      headers: req.headers
-    });
+// Add the callback handler for production
+app.post('/api/payment/phonepe-callback', async (req, res) => {
+    try {
+        console.log('PhonePe Callback received:', {
+            body: req.body,
+            query: req.query,
+            headers: req.headers
+        });
 
-    const { merchantId, merchantTransactionId, transactionId, amount, responseCode } = req.body;
+        const response = req.body;
+        const merchantTransactionId = response.merchantTransactionId;
+        const transactionId = response.transactionId;
+        const amount = response.amount;
+        const paymentStatus = response.code === 'PAYMENT_SUCCESS' ? 'paid' : 'failed';
 
-    // Verify the callback using X-VERIFY header
-    const base64Body = Buffer.from(JSON.stringify(req.body)).toString('base64');
-    const dataToHash = base64Body + '/pg/v1/status' + process.env.PHONEPE_SALT_KEY;
-    const expectedXVerify = crypto.createHash('sha256')
-      .update(dataToHash)
-      .digest('hex') + '###' + process.env.PHONEPE_SALT_INDEX;
+        // Update order status
+        await db.query(
+            'UPDATE orders SET payment_status = $1, payment_id = $2, amount_paid = $3 WHERE transaction_id = $4',
+            [paymentStatus, transactionId, amount/100, merchantTransactionId]
+        );
 
-    if (req.headers['x-verify'] !== expectedXVerify) {
-      throw new Error('Invalid callback signature');
-    }
+        // Get the order details
+        const orderResult = await db.query(
+            'SELECT order_id FROM orders WHERE transaction_id = $1',
+            [merchantTransactionId]
+        );
 
-    // Check transaction status with PhonePe
-    const statusCheckResponse = await axios.post(
-      'https://api-preprod.phonepe.com/apis/pg-sandbox/pg/v1/status',
-      {
-        merchantId: process.env.PHONEPE_MERCHANT_ID,
-        merchantTransactionId: merchantTransactionId
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'X-VERIFY': expectedXVerify,
-          'X-MERCHANT-ID': process.env.PHONEPE_MERCHANT_ID
+        if (orderResult.rows.length === 0) {
+            throw new Error('Order not found');
         }
-      }
-    );
 
-    console.log('PhonePe status check response:', statusCheckResponse.data);
+        const orderId = orderResult.rows[0].order_id;
 
-    const paymentSuccessful = statusCheckResponse.data.success && 
-                             statusCheckResponse.data.code === 'PAYMENT_SUCCESS';
+        if (paymentStatus === 'paid') {
+            return res.redirect(`${process.env.FRONTEND_URL}/payment-success?orderId=${orderId}`);
+        } else {
+            return res.redirect(`${process.env.FRONTEND_URL}/payment-failed?error=Payment_failed`);
+        }
 
-    // Update order status in database
-    await saveOrder({
-      transactionId: merchantTransactionId,
-      status: paymentSuccessful ? 'success' : 'failed',
-      amount: amount / 100, // Convert from paise to rupees
-      paymentResponse: statusCheckResponse.data
-    });
+    } catch (error) {
+        console.error('Callback error:', error);
+        return res.redirect(`${process.env.FRONTEND_URL}/payment-failed?error=Server_error`);
+    }
+});
 
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-    const redirectUrl = paymentSuccessful
-      ? `${frontendUrl}/payment-success`
-      : `${frontendUrl}/payment-failed?error=Payment%20failed`;
+// Get order details endpoint
+app.get('/api/orders/:orderId', async (req, res) => {
+    try {
+        const orderId = parseInt(req.params.orderId);
+        console.log('Fetching details for order:', orderId);
 
-    res.redirect(redirectUrl);
-  } catch (error) {
-    console.error('Error processing payment callback:', error);
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-    res.redirect(`${frontendUrl}/payment-failed?error=${encodeURIComponent(error.message)}`);
-  }
+        const orderQuery = `
+            SELECT o.*, 
+                json_agg(
+                    json_build_object(
+                        'book_id', oi.book_id,
+                        'quantity', oi.quantity,
+                        'price', oi.price,
+                        'title', b.title
+                    )
+                ) as order_items
+            FROM orders o
+            LEFT JOIN order_items oi ON o.order_id = oi.order_id
+            LEFT JOIN books b ON oi.book_id = b.book_id
+            WHERE o.order_id = $1
+            GROUP BY o.order_id`;
+
+        const result = await db.query(orderQuery, [orderId]);
+
+        if (result.rows.length === 0) {
+            console.log('No order found with ID:', orderId);
+            return res.status(404).json({ error: 'Order not found' });
+        }
+
+        console.log('Found order:', result.rows[0]);
+        res.json(result.rows[0]);
+
+    } catch (error) {
+        console.error('Error fetching order details:', error);
+        res.status(500).json({ error: 'Failed to fetch order details' });
+    }
 });
 
 // Payment success handler (handles both GET and POST)
@@ -873,14 +916,7 @@ app.all('/api/payment-success', async (req, res) => {
       }
     
 
-  // } catch (error) {
-  //   console.error('Unhandled error in payment success handler:', error);
-  //   if (req.method === 'GET') {
-  //     return res.status(500).json({ error: 'Internal server error' });
-  //   } else {
-  //     return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?error=Internal server error`);
-  //   }
-  // }
+  
 
 });
 
@@ -1219,46 +1255,6 @@ app.put('/api/admin/orders/:orderId/status', checkAdminCode, async (req, res) =>
   }
 });
 
-// Get order details by ID
-app.get('/api/orders/:orderId', async (req, res) => {
-  try {
-    const { orderId } = req.params;
-    
-    // Get order details
-    const orderQuery = 'SELECT * FROM orders WHERE order_id = $1';
-    const orderResult = await db.query(orderQuery, [orderId]);
-    
-    if (orderResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Order not found' });
-    }
-    
-    const order = orderResult.rows[0];
-    
-    // Get order items
-    const itemsQuery = `
-      SELECT oi.*, b.title 
-      FROM order_items oi 
-      JOIN books b ON oi.book_id = b.book_id 
-      WHERE oi.order_id = $1
-    `;
-    const itemsResult = await db.query(itemsQuery, [orderId]);
-    
-    const completeOrder = {
-      order_id: order.order_id,
-      shipping_address: order.shipping_address,
-      order_items: itemsResult.rows,
-      total_amount: order.total_amount,
-      status: order.payment_status,
-      created_at: order.created_at
-    };
-    
-    res.json(completeOrder);
-  } catch (error) {
-    console.error('Error fetching order details:', error);
-    res.status(500).json({ error: 'Failed to fetch order details' });
-  }
-});
-
 // Update order status
 app.put('/api/orders/:orderId/status', async (req, res) => {
   try {
@@ -1280,6 +1276,9 @@ app.put('/api/orders/:orderId/status', async (req, res) => {
     res.status(500).json({ error: 'Failed to update order status' });
   }
 });
+
+// Add body-parser for x-www-form-urlencoded data
+app.use(express.urlencoded({ extended: true }));
 
 app.listen(port, '0.0.0.0', () => {
   console.log(`Server running on port ${port}`);

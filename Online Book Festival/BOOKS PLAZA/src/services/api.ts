@@ -1,23 +1,50 @@
 import axios from 'axios';
 import { Book } from '../types';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+// Using the environment variable which includes '/api'
+const API_URL = import.meta.env.VITE_API_URL;
 
 // Create an axios instance for admin requests
 const api = axios.create({
-  baseURL: API_URL,
+  baseURL: 'http://localhost:3001',
   headers: {
     'Content-Type': 'application/json',
     'adminCode': '1909'  // Add admin code to all requests
   }
 });
 
-// Create a separate axios instance for public requests (without admin code)
-const publicApi = axios.create({
-  baseURL: API_URL,
-  headers: {
-    'Content-Type': 'application/json'
-  }
+// Add request interceptor for debugging
+api.interceptors.request.use(request => {
+    console.log('Starting Request:', {
+        url: request.url,
+        method: request.method,
+        data: request.data
+    });
+    return request;
+});
+
+// Add response interceptor for debugging
+api.interceptors.response.use(
+    response => {
+        console.log('Response:', response.data);
+        return response;
+    },
+    error => {
+        console.error('API Error:', {
+            message: error.message,
+            response: error.response?.data,
+            status: error.response?.status
+        });
+        return Promise.reject(error);
+    }
+);
+
+// Create axios instance with the base URL that already includes '/api'
+export const publicApi = axios.create({
+    baseURL: API_URL,
+    headers: {
+        'Content-Type': 'application/json'
+    }
 });
 
 // Get featured books
@@ -162,42 +189,49 @@ export const updateOrderStatus = async (orderId: number, status: string) => {
   }
 };
 
-export const createPayment = async (paymentData: {
-  amount: number;
-  productinfo: string;
-  firstname: string;
-  email: string;
-  phone: string;
-  orderId: number;
+// Payment related APIs
+export const createPayment = async (orderData: {
+    orderId: number;
+    amount: string | number;
+    customerName: string;
+    customerEmail: string;
+    customerPhone: string;
 }) => {
-  try {
-    const response = await api.post('/create-payment', paymentData);
-    return response.data;
-  } catch (error) {
-    console.error('Error creating PhonePe payment:', error);
-    throw error;
-  }
+    try {
+        console.log('Creating payment with data:', orderData);
+        const response = await api.post('/api/create-payment', orderData);
+        
+        if (response.data.status === 'success') {
+            return response.data;
+        }
+        throw new Error(response.data.message || 'Payment creation failed');
+    } catch (error: any) {
+        console.error('Payment creation error:', error);
+        throw new Error(error.response?.data?.message || 'Failed to create payment');
+    }
 };
 
 // NEW FUNCTION: Create Order
-export const createOrder = async (orderData: { shipping_address: string; items: { book_id: number; quantity: number; price: number; }[]; }) => {
-  try {
-    const response = await api.post('/orders', orderData);
-    return response.data; // Should return { orderId: ... }
-  } catch (error) {
-    console.error('Error creating order:', error);
-    throw new Error('Failed to create order');
-  }
+export const createOrder = async (orderData: any) => {
+    try {
+        const response = await publicApi.post('/orders', orderData);
+        return response.data;
+    } catch (error) {
+        console.error('Error creating order:', error);
+        throw new Error('Failed to create order');
+    }
 };
 
-export const getOrderDetails = async (orderId: string) => {
-  try {
-    const response = await publicApi.get(`/orders/${orderId}`);
-    return response.data;
-  } catch (error) {
-    console.error('Error fetching order details:', error);
-    throw error; // Re-throw the error for the calling component to handle
-  }
+export const getOrderDetails = async (orderId: number) => {
+    try {
+        console.log('Fetching order details for orderId:', orderId);
+        const response = await publicApi.get(`/orders/${orderId}`);
+        console.log('Order details response:', response.data);
+        return response.data;
+    } catch (error) {
+        console.error('Error fetching order details:', error);
+        throw new Error('Failed to fetch order details');
+    }
 };
 
 export const addBook = async (bookData: Omit<Book, 'book_id'>) => {
@@ -228,4 +262,25 @@ export const updateOrder = async (orderId: number, updatedOrder: any) => {
     console.error('Error updating order:', error);
     throw error;
   }
+};
+
+// Books related APIs
+export const fetchBooks = async () => {
+    try {
+        const response = await publicApi.get('/books');
+        return response.data;
+    } catch (error) {
+        console.error('Error fetching books:', error);
+        throw new Error('Failed to fetch books');
+    }
+};
+
+export const fetchBookById = async (id: number) => {
+    try {
+        const response = await publicApi.get(`/books/${id}`);
+        return response.data;
+    } catch (error) {
+        console.error('Error fetching book:', error);
+        throw new Error('Failed to fetch book');
+    }
 };

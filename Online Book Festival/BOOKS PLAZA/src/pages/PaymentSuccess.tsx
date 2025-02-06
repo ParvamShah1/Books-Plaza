@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { getOrderDetails, updateOrderStatus } from '../services/api';
+import { getOrderDetails } from '../services/api';
 import { toast } from 'react-hot-toast';
+import { Link } from 'react-router-dom';
 
 interface OrderItem {
   book_id: number;
@@ -10,13 +11,29 @@ interface OrderItem {
   title: string;
 }
 
+interface ShippingAddress {
+  firstName: string;
+  lastName: string;
+  address: string;
+  apartment?: string;
+  city: string;
+  state: string;
+  zip: string;
+  email: string;
+  phone: string;
+}
+
 interface Order {
   order_id: number;
-  shipping_address: string;
-  order_items: OrderItem[];
+  transaction_id: string;
   total_amount: number;
-  status: string;
-  createdAt: string;
+  customer_name: string;
+  customer_email: string;
+  customer_phone: string;
+  shipping_address: ShippingAddress;
+  order_items: OrderItem[];
+  payment_status: string;
+  created_at: string;
 }
 
 const PaymentSuccess: React.FC = () => {
@@ -27,75 +44,105 @@ const PaymentSuccess: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const orderId = searchParams.get('orderId');
-
-    if (!orderId) {
-      setError('Order ID not found.');
-      setLoading(false);
-      return;
-    }
-
-    const fetchOrder = async () => {
+    const fetchOrderDetails = async () => {
       try {
-        await updateOrderStatus(Number(orderId), 'paid');
+        setLoading(true);
+        const orderId = searchParams.get('orderId');
+        console.log('Received orderId from URL:', orderId);
 
-        const orderDetails = await getOrderDetails(orderId);
-        setOrder(orderDetails);
-        localStorage.removeItem('cart');
-        toast.success('Payment successful! Your order has been placed.');
+        if (!orderId) {
+          console.error('No orderId in URL parameters');
+          setError('Order ID not found');
+          setLoading(false);
+          return;
+        }
+
+        const orderDetails = await getOrderDetails(parseInt(orderId));
+        console.log('Order details:', orderDetails);
+
+        if (orderDetails) {
+          // Handle shipping address
+          let shippingAddress = orderDetails.shipping_address;
+          if (typeof shippingAddress === 'string') {
+            try {
+              shippingAddress = JSON.parse(shippingAddress);
+            } catch (e) {
+              console.error('Error parsing shipping address:', e);
+            }
+          }
+          
+          setOrder({
+            ...orderDetails,
+            shipping_address: shippingAddress
+          });
+          
+          localStorage.removeItem('cart');
+          toast.success('Payment successful! Your order has been placed.');
+        } else {
+          setError('Order details not found');
+        }
       } catch (err: any) {
-        setError(err.message || 'Failed to fetch order details.');
-        toast.error(err.message || 'Failed to fetch order details.');
+        console.error('Error fetching order details:', err);
+        setError(err.message || 'Failed to fetch order details');
       } finally {
         setLoading(false);
       }
     };
 
-    fetchOrder();
-  }, [searchParams, navigate]);
+    fetchOrderDetails();
+  }, [searchParams]);
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-orange-500"></div>
+      </div>
+    );
   }
 
   if (error) {
-    return <div className="min-h-screen flex items-center justify-center">{error}</div>;
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="bg-white p-8 rounded-lg shadow-md max-w-md w-full text-center">
+          <div className="text-red-500 text-xl font-semibold mb-4">{error}</div>
+          <Link 
+            to="/"
+            className="inline-block bg-orange-500 text-white px-6 py-2 rounded hover:bg-orange-600"
+          >
+            Return to Home
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   if (!order) {
-    return <div className="min-h-screen flex items-center justify-center">Order not found.</div>;
+    return null;
   }
 
-  const shippingAddress = JSON.parse(order.shipping_address);
-
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-      <div className="bg-white p-8 rounded-lg shadow-md max-w-2xl w-full">
-        <div className="flex flex-col items-center mb-8">
-          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
-            <svg className="w-10 h-10 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
-            </svg>
-          </div>
-          <h1 className="text-2xl font-bold text-center">Payment Successful!</h1>
-          <p className="text-gray-600 text-center mt-2">Thank you for your order. Your order ID is: {order.order_id}</p>
+    <div className="min-h-screen bg-gray-100 py-8">
+      <div className="max-w-3xl mx-auto bg-white p-8 rounded-lg shadow-md space-y-6">
+        <div className="text-center mb-8">
+          <h1 className="text-2xl font-bold text-green-600 mb-2">Payment Successful!</h1>
+          <p className="text-gray-600">Order ID: {order.order_id}</p>
         </div>
 
-        <div className="mb-6">
+        <div>
           <h2 className="text-xl font-semibold mb-3">Shipping Address</h2>
           <div className="bg-gray-50 p-4 rounded-lg">
-            <p>{shippingAddress.firstName} {shippingAddress.lastName}</p>
-            <p>{shippingAddress.address}</p>
-            <p>{shippingAddress.city}, {shippingAddress.state} {shippingAddress.zip}</p>
-            <p>Email: {shippingAddress.email}</p>
-            <p>Phone: {shippingAddress.phone}</p>
+            <p>{order.shipping_address.firstName} {order.shipping_address.lastName}</p>
+            <p>{order.shipping_address.address}</p>
+            <p>{order.shipping_address.city}, {order.shipping_address.state} {order.shipping_address.zip}</p>
+            <p>Email: {order.shipping_address.email}</p>
+            <p>Phone: {order.shipping_address.phone}</p>
           </div>
         </div>
 
         <div>
           <h2 className="text-xl font-semibold mb-3">Order Items</h2>
           <div className="bg-gray-50 p-4 rounded-lg space-y-4">
-            {order.order_items.map((item) => (
+            {order.order_items?.map((item) => (
               <div key={item.book_id} className="flex justify-between items-center">
                 <div>
                   <p className="font-semibold">{item.title}</p>
@@ -107,8 +154,17 @@ const PaymentSuccess: React.FC = () => {
           </div>
           <div className="mt-4 flex justify-between items-center">
             <span className="font-semibold">Total</span>
-            <span className="font-bold">₹{order.total_amount.toFixed(2)}</span>
+            <span className="font-bold">₹{Number(order.total_amount).toFixed(2)}</span>
           </div>
+        </div>
+
+        <div className="text-center mt-8">
+          <Link 
+            to="/"
+            className="inline-block bg-orange-500 text-white px-6 py-2 rounded hover:bg-orange-600"
+          >
+            Continue Shopping
+          </Link>
         </div>
       </div>
     </div>

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config';
 import { createPayment, createOrder } from '../services/api';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'react-hot-toast';
 
 interface CartItem {
   book_id: number;
@@ -91,53 +92,57 @@ const CheckoutForm: React.FC<CheckoutFormProps> = ({ cart, onCheckoutComplete })
     setError(null);
 
     try {
-      // 1. CREATE ORDER FIRST
-      // Ensure all required fields are present
-      if (!cart.every(item => item.book_id)) {
-        throw new Error('Some items are missing book_id');
-      }
-
+      // 1. Create order
       const orderData = {
         items: cart.map(item => ({
           book_id: item.book_id,
           quantity: item.quantity,
           price: item.price
         })),
-        shipping_address: JSON.stringify({
+        shipping_address: {
           firstName: formData.firstName,
           lastName: formData.lastName,
-          email: formData.email,
-          phone: formData.phone,
           address: formData.address,
+          apartment: formData.apartment,
           city: formData.city,
           state: formData.state,
-          zip: formData.zipCode
-        })
+          zip: formData.zipCode,
+          country: formData.country
+        },
+        customer_name: `${formData.firstName} ${formData.lastName}`,
+        customer_email: formData.email,
+        customer_phone: formData.phone,
+        total_amount: cart.reduce((total, item) => total + item.price * item.quantity, 0)
       };
 
+      console.log('Creating order with data:', orderData);
       const orderResponse = await createOrder(orderData);
-      const orderId = orderResponse.orderId; // Get the order ID
+      console.log('Order created:', orderResponse);
 
-      // 2. CREATE PAYMENT (pass orderId)
+      // 2. Create payment
       const paymentData = {
-        amount: cart.reduce((total, item) => total + item.price * item.quantity, 0),
-        productinfo: cart.map(item => item.title).join(', '),
-        firstname: formData.firstName,
-        email: formData.email,
-        phone: formData.phone,
-        orderId: orderId, // Pass the order ID to the payment gateway
+        orderId: orderResponse.order_id,
+        amount: orderResponse.total_amount,
+        customerName: orderResponse.customer_name,
+        customerEmail: orderResponse.customer_email,
+        customerPhone: orderResponse.customer_phone
       };
 
+      console.log('Creating payment with data:', paymentData);
       const paymentResponse = await createPayment(paymentData);
+      console.log('Payment created:', paymentResponse);
 
+      // 3. Redirect to payment gateway
       if (paymentResponse.redirectUrl) {
         window.location.href = paymentResponse.redirectUrl;
       } else {
-        throw new Error('Payment initiation failed.');
+        throw new Error('No redirect URL received from payment gateway');
       }
 
     } catch (err: any) {
-      setError(err.message || 'An error occurred during checkout.');
+      console.error('Checkout error:', err);
+      setError(err.message || 'An error occurred during checkout');
+      toast.error(err.message || 'Checkout failed');
     } finally {
       setLoading(false);
     }
