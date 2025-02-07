@@ -1,15 +1,16 @@
 import axios from 'axios';
 import { Book } from '../types';
+import { API_BASE_URL } from '../config';
 
 // Using the environment variable which includes '/api'
-const API_URL = import.meta.env.VITE_API_URL;
+// const API_URL = import.meta.env.VITE_API_URL;
 
 // Create an axios instance for admin requests
 const api = axios.create({
-  baseURL: 'http://localhost:3001',
+  baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
-    'adminCode': '1909'  // Add admin code to all requests
+    'adminCode': '1909'
   }
 });
 
@@ -25,28 +26,24 @@ api.interceptors.request.use(request => {
 
 // Add response interceptor for debugging
 api.interceptors.response.use(
-    response => {
-        console.log('Response:', response.data);
-        return response;
-    },
-    error => {
-        console.error('API Error:', {
-            message: error.message,
-            response: error.response?.data,
-            status: error.response?.status
-        });
-        return Promise.reject(error);
-    }
+  response => response,
+  error => {
+    console.error('API Error:', {
+      status: error.response?.status,
+      message: error.message,
+      url: error.config?.url
+    });
+    throw error;
+  }
 );
 
 // Create axios instance with the base URL that already includes '/api'
-export const publicApi = axios.create({
-    baseURL: API_URL,
-    headers: {
-        'Content-Type': 'application/json'
-    }
+const publicApi = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json'
+  }
 });
-
 // Get featured books
 export const getFeaturedBooks = async (): Promise<Book[]> => {
   try {
@@ -62,10 +59,10 @@ export const getFeaturedBooks = async (): Promise<Book[]> => {
 export const getAdminBooks = async (
   page: number = 1,
   limit: number = 10,
-  search: string = '',
-  sortBy: string = '',
-  sortOrder: string = 'asc',
-  filters: any = {}
+  search?: string,
+  sortBy?: string,
+  sortOrder?: string,
+  filters?: Record<string, string>
 ) => {
   try {
     const params = new URLSearchParams({
@@ -217,7 +214,7 @@ export const createPayment = async (orderData: {
 
       console.log('Payment Payload:', payload);
       
-      const response = await api.post('/api/create-payment', payload);
+      const response = await api.post('/create-payment', payload);
       
       if (!response.data.redirectUrl) {
           throw new Error('Missing redirect URL from PhonePe');
