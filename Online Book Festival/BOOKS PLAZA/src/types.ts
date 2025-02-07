@@ -10,6 +10,10 @@ export interface Book {
   created_at?: string;
   genre: string;
   language: string;
+  isbn?: string;
+  publisher?: string;
+  publishDate?: string;
+  pages?: number;
 }
 
 export interface CartItem extends Book {

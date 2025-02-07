@@ -14,6 +14,7 @@ const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
+// const { upload, checkAdminCode } = require('./middleware');
 
 // Load environment variables
 require('dotenv').config();
@@ -97,6 +98,10 @@ app.post('/api/admin/books', checkAdminCode, upload.single('image'), [
   body('price').isFloat({ min: 0.01 }).withMessage('Price must be a positive number'),
   body('genre').notEmpty().trim().escape().withMessage('Genre is required'),
   body('language').notEmpty().trim().escape().withMessage('Language is required'),
+  body('isbn').notEmpty().trim().escape().withMessage('ISBN is required'),
+  body('publisher').notEmpty().trim().escape().withMessage('Publisher is required'),
+  body('publishDate').notEmpty().trim().escape().withMessage('Publish date is required'),
+  body('pages').isInt({ min: 1 }).withMessage('Pages must be a positive integer'),
 ], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -104,8 +109,8 @@ app.post('/api/admin/books', checkAdminCode, upload.single('image'), [
   }
 
   try {
-    const { title, author, description, price, genre, language } = req.body;
-    console.log('Request body:', { title, author, description, price, genre, language });
+    const { title, author, description, price, genre, language, isbn, publisher, publishDate, pages } = req.body;
+    console.log('Request body:', { title, author, description, price, genre, language, isbn, publisher, publishDate, pages });
     
     let imageUrl = null;
     if (req.file) {
@@ -122,8 +127,8 @@ app.post('/api/admin/books', checkAdminCode, upload.single('image'), [
     }
 
     const result = await db.query(
-      'INSERT INTO books (title, author, description, price, genre, language, image_url, is_active) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-      [title, author, description, price, genre, language, imageUrl, true]
+      'INSERT INTO books (title, author, description, price, genre, language, isbn, publisher, publishdate, pages, image_url, is_active) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *',
+      [title, author, description, price, genre, language, isbn, publisher, publishDate, pages, imageUrl, true]
     );
 
     console.log('Book created successfully:', result.rows[0]);
@@ -239,10 +244,25 @@ app.put('/api/admin/books/:id', checkAdminCode, upload.single('image'), [
   body('price').optional().isFloat({ min: 0.01 }),
   body('genre').optional().trim().escape(),
   body('language').optional().trim().escape(),
+  body('isbn').optional().trim().escape(),
+  body('publisher').optional().trim().escape(),
+  body('publishDate').optional().trim().escape(),
+  body('pages').optional().isInt({ min: 1 }),
 ], async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, author, description, price, genre, language } = req.body;
+    const {
+      title,
+      author,
+      description,
+      price,
+      genre,
+      language,
+      isbn,
+      publisher,
+      publishDate,
+      pages
+    } = req.body;
     
     let imageUrl = undefined;
     if (req.file) {
@@ -250,8 +270,8 @@ app.put('/api/admin/books/:id', checkAdminCode, upload.single('image'), [
       console.log('Cloudinary upload completed for update, image URL:', imageUrl);
     }
 
-    const updateFields = ['title', 'author', 'description', 'price', 'genre', 'language'];
-    const values = [title, author, description, price, genre, language];
+    const updateFields = ['title', 'author', 'description', 'price', 'genre', 'language', 'isbn', 'publisher', 'publishdate', 'pages'];
+    const values = [title, author, description, price, genre, language, isbn, publisher, publishDate, pages];
     
     if (imageUrl) {
       updateFields.push('image_url');
@@ -467,7 +487,18 @@ app.patch('/api/admin/books/:id/status', checkAdminCode, async (req, res) => {
 app.put('/api/admin/books/:id', checkAdminCode, upload.single('image'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, author, description, price, genre, language } = req.body;
+    const {
+      title,
+      author,
+      description,
+      price,
+      genre,
+      language,
+      isbn,
+      publisher,
+      publishDate,
+      pages
+    } = req.body;
     
     // Check if the book exists
     const existingBook = await db.query('SELECT * FROM books WHERE book_id = $1', [id]);
@@ -484,8 +515,8 @@ app.put('/api/admin/books/:id', checkAdminCode, upload.single('image'), async (r
     }
 
     const result = await db.query(
-      'UPDATE books SET title = $1, author = $2, description = $3, price = $4, genre = $5, language = $6, image_url = $7 WHERE book_id = $8 RETURNING *',
-      [title, author, description, price, genre, language, imageUrl, id]
+      'UPDATE books SET title = $1, author = $2, description = $3, price = $4, genre = $5, language = $6, isbn = $7, publisher = $8, publishdate = $9, pages = $10, image_url = $11 WHERE book_id = $12 RETURNING *',
+      [title, author, description, price, genre, language, isbn, publisher, publishDate, pages, imageUrl, id]
     );
 
     res.json(result.rows[0]);
@@ -645,15 +676,15 @@ const SALT_INDEX = process.env.PHONEPE_SALT_INDEX;
 
 // Enhanced X-VERIFY calculation
 const calculateXVerify = (base64Payload, path, saltKey, saltIndex) => {
-    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-    const stringToHash = base64Payload + normalizedPath + saltKey;
-    console.log('Hash Input:', { 
-        base64Payload,
-        normalizedPath,
-        saltKey: saltKey ? '***' : 'MISSING',
-        saltIndex 
-    });
-    return crypto.createHash('sha256').update(stringToHash).digest('hex') + `###${saltIndex}`;
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const stringToHash = base64Payload + normalizedPath + saltKey;
+  console.log('Hash Input:', {
+      base64Payload,
+      normalizedPath,
+      saltKey: saltKey,  // Keep this for debugging
+      saltIndex
+  });
+  return crypto.createHash('sha256').update(stringToHash).digest('hex') + `###${saltIndex}`;
 };
 
 // Create Payment Endpoint
@@ -662,7 +693,7 @@ app.post('/api/create-payment', async (req, res) => {
   
   try {
       console.log('Environment Config:', {
-          MERCHANT_ID: MERCHANT_ID ? '***' : 'MISSING',
+          MERCHANT_ID: MERCHANT_ID,
           SALT_INDEX,
           PHONEPE_API_URL: process.env.PHONEPE_API_URL,
           CALLBACK_URL: `${process.env.BACKEND_URL}/api/payment/phonepe-callback`
@@ -700,8 +731,9 @@ app.post('/api/create-payment', async (req, res) => {
           merchantTransactionId,
           merchantUserId: `CUST_${sanitizedPhone.slice(-6)}`,
           amount: Math.round(Number(amount) * 100),
-          redirectUrl: `${process.env.BACKEND_URL}/api/payment/phonepe-callback`,
-          callbackUrl: `${process.env.BACKEND_URL}/api/payment/phonepe-callback`,
+          redirectUrl: `${process.env.BACKEND_URL}/payment-success`,
+          redirectMode: "REDIRECT",
+          callbackUrl: `https://2be9-36-255-84-98.ngrok-free.app/api/payment/phonepe-callback`,
           mobileNumber: sanitizedPhone.slice(-10),
           paymentInstrument: { type: 'PAY_PAGE' }
       };
@@ -824,7 +856,107 @@ app.post('/api/payment/verify-status', async (req, res) => {
         });
     }
 });
+app.post('/api/payment/phonepe-callback', async (req, res) => {
+  try {
+    const saltKey = process.env.PHONEPE_SALT_KEY;
+    const saltIndex = process.env.PHONEPE_SALT_INDEX || '1';
 
+    // 1. --- Verify the X-VERIFY Header (Callback Version) ---
+
+    // Get the X-VERIFY header from the incoming request.
+    const receivedXVerify = req.headers['x-verify'];
+
+    // Check if the X-VERIFY header is present.
+    if (!receivedXVerify) {
+      console.error('X-VERIFY header missing from callback.');
+      return res.status(400).json({ success: false, error: 'X-VERIFY header missing' });
+    }
+
+    // Extract the SHA256 hash part from the received X-VERIFY (before ###).
+    const receivedHash = receivedXVerify.split('###')[0];
+
+    // Get the base64 encoded response body.  This is the ENTIRE body.
+    const encodedPayload = req.body.response;
+
+    if (!encodedPayload) {
+        console.error('Request body or response field is missing.');
+        return res.status(400).json({ success: false, error: 'Request body missing or invalid' });
+    }
+
+    // Construct the string to hash for verification.
+    const stringToHash = encodedPayload + saltKey;
+
+    // Calculate the SHA256 hash.
+    const calculatedHash = crypto.createHash('sha256').update(stringToHash).digest('hex');
+
+    // Check if the calculated hash matches the received hash.
+    if (calculatedHash !== receivedHash) {
+      console.error('X-VERIFY mismatch.  Rejecting callback.');
+      console.error('Calculated Hash:', calculatedHash);
+      console.error('Received Hash  :', receivedHash);
+      return res.status(400).json({ success: false, error: 'X-VERIFY mismatch' });
+    }
+
+    // 2. --- Decode the PhonePe Response ---
+
+    // Decode the base64 encoded response body.
+    const decodedPayload = Buffer.from(encodedPayload, 'base64').toString('utf-8');
+    const phonePeResponse = JSON.parse(decodedPayload);
+
+    console.log('Decoded PhonePe Callback Payload:', phonePeResponse);
+
+    // 3. --- Process the Payment Event ---
+    if (phonePeResponse.success === true && phonePeResponse.code === 'PAYMENT_SUCCESS') {
+
+        // Extract data from the DECODED response.
+        const { merchantId, merchantTransactionId, transactionId, amount } = phonePeResponse.data;
+        console.log("Extracted Data", merchantId, merchantTransactionId, transactionId, amount)
+
+      // Find the order in YOUR database using merchantTransactionId.
+      const orderResult = await db.query('SELECT * FROM orders WHERE transaction_id = $1', [merchantTransactionId]);
+
+      if (orderResult.rows.length > 0) {
+        // Update the order status in YOUR database.
+        await db.query(
+          'UPDATE orders SET payment_status = $1, payment_id = $2 WHERE transaction_id = $3',
+          ['Paid', transactionId, merchantTransactionId] // Use 'Paid', transactionId, and merchantTransactionId
+        );
+        console.log(`Order ${merchantTransactionId} marked as paid.`);
+      }
+      else{
+        console.log("no order found");
+        return res.status(404).json({message: "Order not found"})
+      }
+    } else {
+      // Handle payment failure
+      console.error('PhonePe Payment Failed:', phonePeResponse);
+      const merchantTransactionId = phonePeResponse.data.merchantTransactionId
+
+      // Find and update the order in YOUR database
+      const orderResult = await db.query('SELECT * FROM orders WHERE transaction_id = $1', [merchantTransactionId]);
+
+      if (orderResult.rows.length > 0) {
+          await db.query(
+            'UPDATE orders SET payment_status = $1 WHERE transaction_id = $2',
+            ['Failed', merchantTransactionId]
+          );
+          console.log(`Order ${merchantTransactionId} marked as failed.`);
+      }
+      else{
+        console.log("no order found");
+        return res.status(404).json({message: "Order not found"})
+      }
+    }
+
+    // 4. --- Respond to PhonePe (ALWAYS 200 OK) ---
+    res.status(200).json({ success: true }); // ACKNOWLEDGE receipt
+
+  } catch (error) {
+    console.error('Error in PhonePe callback handler:', error);
+    // ALWAYS return 200 OK to PhonePe, even on errors.
+    res.status(200).json({ success: false });  // Send success: false for your own tracking
+  }
+});
 
 // Get order details endpoint
 app.get('/api/orders/:orderId', async (req, res) => {
@@ -1158,6 +1290,7 @@ app.get('/api/admin/orders', checkAdminCode, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch orders' });
   }
 });
+
 
 // Send Order Confirmation Email
 async function sendOrderConfirmationEmail(orderDetails) {

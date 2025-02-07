@@ -100,7 +100,7 @@ const FeaturedBooks: React.FC<FeaturedBooksProps> = ({ onAddToCart }) => {
 
       {/* Books Grid */}
       <div className="px-4 py-6">
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {filteredBooks.map((book) => (
             <div 
               key={book.book_id}
@@ -118,7 +118,7 @@ const FeaturedBooks: React.FC<FeaturedBooksProps> = ({ onAddToCart }) => {
                 {/* Quick Add Button */}
                 <button
                   onClick={(e) => {
-                    e.stopPropagation(); // Prevent triggering the parent onClick
+                    e.stopPropagation(); // Prevent parent click navigation
                     onAddToCart(book);
                   }}
                   className="absolute bottom-2 right-2 w-10 h-10 rounded-full bg-white/90 shadow-lg flex items-center justify-center transform hover:scale-110 transition-transform"
@@ -135,16 +135,13 @@ const FeaturedBooks: React.FC<FeaturedBooksProps> = ({ onAddToCart }) => {
                 <p className="text-xs text-gray-600 mb-2">By {book.author}</p>
                 <div className="flex items-center justify-start gap-2">
                   <p className="text-sm font-bold text-black">₹{book.price}</p>
-                  <span className="text-sm font-bold text-gray-500 line-through ">
-                ₹{Math.round(book.price * 1.2)}
-                </span>
-                  {/* <span className="px-2 py-1 bg-orange-100 text-black text-xs font-medium rounded-lg">
-                    {book.genre}
-                  </span> */}
+                  <span className="text-sm font-bold text-gray-500 line-through">
+                    ₹{Math.round(book.price * 1.2)}
+                  </span>
                 </div>
               </div>
 
-              {/* Remove the genre tag from top-left position */}
+              {/* Genre Tag positioned at top-left */}
               <div className="absolute top-2 left-2">
                 <span className="px-2 py-1 bg-white/90 text-black text-xs font-medium rounded-lg shadow-lg">
                   {book.genre}

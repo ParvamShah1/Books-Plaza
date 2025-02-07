@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
-import { uploadBook, getAdminBooks, updateBook, deleteBook, toggleBookStatus, getOrders, updateOrderStatus } from '../services/api';
+import { uploadBook, getAdminBooks, updateBook, deleteBook, toggleBookStatus, getOrders, updateOrderStatus, getBookByISBN } from '../services/api';
 import { Book } from '../types';
 
 const ADMIN_CODE = '1909';
@@ -48,9 +48,14 @@ function Admin() {
     description: '',
     price: '',
     genre: '',
-    language: 'English',
+    language: '',
     image: null as File | null,
+    publisher: '',
+    publishDate: '',
+    pages: '',
   });
+  const [error, setError] = useState<string | null>(null);
+  const [isbn, setIsbn] = useState('');
 
   const genreOptions = [
     'Fiction',
@@ -102,10 +107,8 @@ function Admin() {
   };
 
   const fetchBooks = async () => {
-    if (!isAuthenticated) return;
-    
+    setIsLoading(true);
     try {
-      setIsLoading(true);
       const response = await getAdminBooks(
         currentPage,
         10,
@@ -114,13 +117,14 @@ function Admin() {
         sortOrder,
         filters
       );
+      
       setBooks(response.books || []);
       setTotalBooks(response.totalBooks || 0);
       setTotalPages(response.totalPages || 1);
-    } catch (error) {
-      console.error('Error fetching books:', error);
-      toast.error('Failed to fetch books');
-      // If we get a 401, we need to re-authenticate
+      setError(null);
+    } catch (error: any) {
+      console.error('Error in Admin component:', error);
+      setError(error.message || 'Failed to load books');
       if (error?.response?.status === 401) {
         setIsAuthenticated(false);
       }
@@ -151,13 +155,10 @@ function Admin() {
 
   useEffect(() => {
     if (isAuthenticated) {
-      if (activeTab === 'books') {
-        fetchBooks();
-      } else {
-        fetchOrders();
-      }
+      fetchBooks();
     }
-  }, [isAuthenticated, currentPage, search, sortBy, sortOrder, filters, activeTab]);
+  }, [currentPage, search, sortBy, sortOrder, filters, isAuthenticated]);
+
   const handleEdit = (book: Book) => {
     setSelectedBook(book);
     setFormData({
@@ -168,8 +169,12 @@ function Admin() {
       genre: book.genre,
       language: book.language,
       image: null,
+      publisher: '',
+      publishDate: '',
+      pages: '',
     });
   };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.title || !formData.author || !formData.price || !formData.genre || !formData.language) {
@@ -180,12 +185,18 @@ function Admin() {
     try {
       setIsLoading(true);
       const form = new FormData();
-      form.append('title', formData.title);
-      form.append('author', formData.author);
-      form.append('description', formData.description);
-      form.append('price', formData.price);
-      form.append('genre', formData.genre);
-      form.append('language', formData.language);
+      form.append("title", formData.title);
+      form.append("author", formData.author);
+      form.append("description", formData.description);
+      form.append("price", formData.price);
+      form.append("genre", formData.genre);
+      form.append("language", formData.language);
+
+      form.append("isbn", isbn);
+      form.append("publisher", formData.publisher);
+      form.append("publishDate", formData.publishDate);
+      form.append("pages", formData.pages);
+
       if (formData.image) {
         form.append('image', formData.image);
       }
@@ -204,8 +215,11 @@ function Admin() {
         description: '',
         price: '',
         genre: '',
-        language: 'English',
+        language: '',
         image: null,
+        publisher: '',
+        publishDate: '',
+        pages: '',
       });
       setSelectedBook(null);
       fetchBooks();
@@ -338,6 +352,41 @@ function Admin() {
     }
   };
 
+  const handleIsbnLookup = async () => {
+    if (!isbn) {
+      toast.error("Please enter an ISBN");
+      return;
+    }
+
+    try {
+      const bookData = await getBookByISBN(isbn);
+      if (bookData) {
+        // Debug: log the fetched data to verify field names
+        console.log("Fetched bookData:", bookData);
+
+        // Prefill the form with the fetched data.
+        // Google Books API should return publishedDate, pageCount, and language if available.
+        setFormData({
+          ...formData,
+          title: bookData.title || '',
+          author: bookData.authors ? bookData.authors.join(', ') : '',
+          description: bookData.description || '',
+          genre: bookData.genre || '',
+          language: bookData.language || 'English',
+          image: null,
+          publisher: bookData.publisher || '',
+          publishDate: bookData.publishedDate || '',
+          pages: bookData.pageCount || '',
+        });
+        toast.success("Book data fetched successfully!");
+      } else {
+        toast.error("Book not found for this ISBN.");
+      }
+    } catch (error) {
+      toast.error('Error fetching book data.');
+    }
+  };
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-gray-100 py-6 flex flex-col justify-center sm:py-12">
@@ -374,8 +423,25 @@ function Admin() {
     );
   }
 
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="bg-white p-8 rounded-lg shadow-md">
+          <h2 className="text-red-600 text-xl font-bold mb-4">Error</h2>
+          <p className="text-gray-600">{error}</p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="mt-4 bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="container mx-auto px-4 py-8">
+    <div className="container mx-auto p-4">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">Admin Dashboard</h1>
         <div className="space-x-4">
@@ -403,94 +469,163 @@ function Admin() {
       </div>
 
       {activeTab === 'books' ? (
-        // Books Management Section
         <div>
-          {/* Add/Edit Book Form */}
+          <div className="mb-4 flex items-center">
+            <input
+              type="text"
+              placeholder="Enter ISBN"
+              value={isbn}
+              onChange={(e) => setIsbn(e.target.value)}
+              className="shadow appearance-none border rounded w-full py-2 px-3 mr-2 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+            />
+            <button
+              onClick={handleIsbnLookup}
+              className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline"
+            >
+              Lookup Book
+            </button>
+          </div>
+
           <div className="bg-white p-6 rounded-lg shadow-md mb-8">
             <h2 className="text-xl font-semibold mb-4">
               {selectedBook ? 'Edit Book' : 'Add New Book'}
             </h2>
             <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Title</label>
-                <input
-                  type="text"
-                  value={formData.title}
-                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
-                  required
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div className="mb-4">
+                  <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="title">
+                    Title:
+                  </label>
+                  <input
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    id="title"
+                    type="text"
+                    placeholder="Title"
+                    value={formData.title}
+                    onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                  />
+                </div>
+                <div className="mb-4">
+                  <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="author">
+                    Author:
+                  </label>
+                  <input
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    id="author"
+                    type="text"
+                    placeholder="Author"
+                    value={formData.author}
+                    onChange={(e) => setFormData({ ...formData, author: e.target.value })}
+                  />
+                </div>
+                <div className="mb-4 col-span-2">
+                  <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="description">
+                    Description:
+                  </label>
+                  <textarea
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none h-48"
+                    id="description"
+                    placeholder="Description"
+                    value={formData.description}
+                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  ></textarea>
+                </div>
+                <div className="mb-4">
+                  <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="price">
+                    Price:
+                  </label>
+                  <input
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    id="price"
+                    type="text"
+                    placeholder="Price"
+                    value={formData.price}
+                    onChange={(e) => setFormData({ ...formData, price: e.target.value })}
+                  />
+                </div>
+                <div className="mb-4">
+                  <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="genre">
+                    Genre:
+                  </label>
+                  <select
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    id="genre"
+                    value={formData.genre}
+                    onChange={(e) => setFormData({ ...formData, genre: e.target.value })}
+                  >
+                    <option value="">Select Genre</option>
+                    {genreOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="mb-4">
+                  <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="language">
+                    Language:
+                  </label>
+                  <input
+                    id="language"
+                    type="text"
+                    placeholder="Language"
+                    value={formData.language}
+                    readOnly
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none"
+                  />
+                </div>
+                <div className="mb-4">
+                  <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="image">
+                    Image:
+                  </label>
+                  <input
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    id="image"
+                    type="file"
+                    onChange={(e) => setFormData({ ...formData, image: e.target.files ? e.target.files[0] : null })}
+                  />
+                </div>
+                <div className="mb-4">
+                  <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="publisher">
+                    Publisher:
+                  </label>
+                  <input
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    id="publisher"
+                    type="text"
+                    placeholder="Publisher"
+                    value={formData.publisher}
+                    onChange={(e) => setFormData({ ...formData, publisher: e.target.value })}
+                  />
+                </div>
+                <div className="mb-4">
+                  <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="publishDate">
+                    Publish Date:
+                  </label>
+                  <input
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    id="publishDate"
+                    type="text"
+                    placeholder="Publish Date (YYYY-MM-DD)"
+                    value={formData.publishDate}
+                    onChange={(e) => setFormData({ ...formData, publishDate: e.target.value })}
+                  />
+                </div>
+                <div className="mb-4">
+                  <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="pages">
+                    Pages:
+                  </label>
+                  <input
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    id="pages"
+                    type="text"
+                    placeholder="Number of Pages"
+                    value={formData.pages}
+                    onChange={(e) => setFormData({ ...formData, pages: e.target.value })}
+                  />
+                </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Author</label>
-                <input
-                  type="text"
-                  value={formData.author}
-                  onChange={(e) => setFormData({ ...formData, author: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Description</label>
-                <textarea
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
-                  rows={3}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Price</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={formData.price}
-                  onChange={(e) => setFormData({ ...formData, price: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Genre</label>
-                <select
-                  value={formData.genre}
-                  onChange={(e) => setFormData({ ...formData, genre: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
-                  required
-                >
-                  <option value="">Select a genre</option>
-                  {genreOptions.map((genre) => (
-                    <option key={genre} value={genre}>
-                      {genre}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Language</label>
-                <select
-                  value={formData.language}
-                  onChange={(e) => setFormData({ ...formData, language: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
-                  required
-                >
-                  {languageOptions.map((language) => (
-                    <option key={language} value={language}>
-                      {language}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Image</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => setFormData({ ...formData, image: e.target.files?.[0] || null })}
-                  className="mt-1 block w-full"
-                />
-              </div>
+
               <div className="flex justify-end space-x-3">
                 {selectedBook && (
                   <button
@@ -503,8 +638,11 @@ function Admin() {
                         description: '',
                         price: '',
                         genre: '',
-                        language: 'English',
+                        language: '',
                         image: null,
+                        publisher: '',
+                        publishDate: '',
+                        pages: '',
                       });
                     }}
                     className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
@@ -523,7 +661,6 @@ function Admin() {
             </form>
           </div>
 
-          {/* Books List */}
           <div className="bg-white rounded-lg shadow-md">
             <div className="p-6">
               <div className="flex justify-between items-center mb-4">
@@ -566,9 +703,8 @@ function Admin() {
                       </th>
                     </tr>
                   </thead>
-                  {/* // Then update the table body to use sortedBooks instead of books */}
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {sortedBooks.map((book) => (
+                    {books.map((book) => (
                       <tr key={book.book_id}>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm font-medium text-gray-900">{book.title}</div>
@@ -617,7 +753,6 @@ function Admin() {
                 </table>
               </div>
 
-              {/* Pagination */}
               <div className="flex justify-between items-center mt-4">
                 <div className="text-sm text-gray-700">
                   Showing {(currentPage - 1) * 10 + 1} to{' '}
@@ -644,7 +779,6 @@ function Admin() {
           </div>
         </div>
       ) : (
-        // Orders Section
         <div className="grid gap-6">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-semibold">Orders</h2>

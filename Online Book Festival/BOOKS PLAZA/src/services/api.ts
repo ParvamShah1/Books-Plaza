@@ -306,3 +306,21 @@ export const fetchBookById = async (id: number) => {
         throw new Error('Failed to fetch book');
     }
 };
+
+// Function to fetch book data from Google Books API by ISBN
+export const getBookByISBN = async (isbn: string) => {
+  try {
+    const response = await axios.get(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
+
+    if (response.data.items && response.data.items.length > 0) {
+      // Extract relevant data from the first result
+      const bookData = response.data.items[0].volumeInfo;
+      return bookData;
+    } else {
+      return null; // Book not found
+    }
+  } catch (error) {
+    console.error('Error fetching book by ISBN:', error);
+    throw error;
+  }
+};

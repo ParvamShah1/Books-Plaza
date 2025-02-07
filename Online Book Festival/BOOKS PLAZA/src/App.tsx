@@ -126,14 +126,8 @@ function App() {
             <Route path="/contact" element={<ContactUs />} />
             <Route path="/returns" element={<ReturnPolicy />} />
 
-            <Route path="/order-success" element={<div className="text-center p-8">
-              <h1 className="text-3xl font-bold text-green-600 mb-4">Order Successful!</h1>
-              <p className="text-gray-600">Thank you for your purchase. You will receive an email confirmation shortly.</p>
-            </div>} />
-            <Route path="/payment-failure" element={<div className="text-center p-8">
-              <h1 className="text-3xl font-bold text-red-600 mb-4">Payment Failed</h1>
-              <p className="text-gray-600">Sorry, your payment could not be processed. Please try again.</p>
-            </div>} />
+            
+            
             <Route path="/payment-success" element={<PaymentSuccess />} />
             <Route path="/payment-failed" element={
               <div className="min-h-screen bg-gray-100 flex items-center justify-center">
