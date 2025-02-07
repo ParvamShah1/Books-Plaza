@@ -148,7 +148,7 @@ const BookDetails: React.FC<BookDetailsProps> = ({ onAddToCart }) => {
               </div>
               <div className="flex justify-start py-2 border-b border-gray-100">
                 <span className="text-black">Publish Date:</span>
-                <span className="text-gray-600 font-medium">{book.publishDate}</span>
+                <span className="text-gray-600 font-medium">{book.publishdate}</span>
               </div>
               <div className="flex justify-start py-2 border-b border-gray-100">
                 <span className="text-black">Pages:</span>

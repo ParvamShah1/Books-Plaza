@@ -169,9 +169,9 @@ function Admin() {
       genre: book.genre,
       language: book.language,
       image: null,
-      publisher: '',
-      publishDate: '',
-      pages: '',
+      publisher: book.publisher || '',         // Now pre-filled with the book's publisher if available
+      publishDate: book.publishDate || '',       // Pre-fill publish date
+      pages: book.pages ? book.pages.toString() : ''  // Convert pages to string if it exists
     });
   };
 

@@ -12,7 +12,7 @@ export interface Book {
   language: string;
   isbn?: string;
   publisher?: string;
-  publishDate?: string;
+  publishdate?: string;
   pages?: number;
 }
 

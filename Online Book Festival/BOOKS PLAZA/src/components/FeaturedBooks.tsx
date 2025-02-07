@@ -100,7 +100,7 @@ const FeaturedBooks: React.FC<FeaturedBooksProps> = ({ onAddToCart }) => {
 
       {/* Books Grid */}
       <div className="px-4 py-6">
-        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
           {filteredBooks.map((book) => (
             <div 
               key={book.book_id}
