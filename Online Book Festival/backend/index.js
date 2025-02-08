@@ -696,7 +696,7 @@ app.post('/api/create-payment', async (req, res) => {
           MERCHANT_ID: MERCHANT_ID,
           SALT_INDEX,
           PHONEPE_API_URL: process.env.PHONEPE_API_URL,
-          CALLBACK_URL: `${process.env.BACKEND_URL}/api/payment/phonepe-callback`
+          CALLBACK_URL: `https://books-plaza-production.up.railway.app/api/payment/phonepe-callback`
       });
 
       // Validate required fields
@@ -731,9 +731,9 @@ app.post('/api/create-payment', async (req, res) => {
           merchantTransactionId,
           merchantUserId: `CUST_${sanitizedPhone.slice(-6)}`,
           amount: Math.round(Number(amount) * 100),
-          redirectUrl: `${process.env.BACKEND_URL}/payment-success`,
+          redirectUrl: `https://www.booksplaza.in/payment-success`,
           redirectMode: "REDIRECT",
-          callbackUrl: `https://2be9-36-255-84-98.ngrok-free.app/api/payment/phonepe-callback`,
+          callbackUrl: `https://books-plaza-production.up.railway.app/api/payment/phonepe-callback`,
           mobileNumber: sanitizedPhone.slice(-10),
           paymentInstrument: { type: 'PAY_PAGE' }
       };
@@ -767,7 +767,7 @@ app.post('/api/create-payment', async (req, res) => {
               `UPDATE orders 
                SET transaction_id = $1, 
                    payment_status = 'pending', 
-                   payment_initiated_at = NOW()
+                   created_at = NOW()
                WHERE order_id = $2`,
               [merchantTransactionId, sanitizedOrderId]
           );
@@ -792,7 +792,8 @@ app.post('/api/create-payment', async (req, res) => {
       console.error('Payment Processing Error:', {
           message: error.message,
           stack: error.stack,
-          transactionId: merchantTransactionId || 'N/A'
+          transactionId: merchantTransactionId || 'N/A',
+          responseData: error.response?.data
       });
 
       return res.status(500).json({ 
@@ -803,7 +804,6 @@ app.post('/api/create-payment', async (req, res) => {
       });
   }
 });
-
 // Verify Status Endpoint
 app.post('/api/payment/verify-status', async (req, res) => {
     try {
