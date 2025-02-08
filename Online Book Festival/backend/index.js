@@ -695,7 +695,7 @@ app.post('/api/create-payment', async (req, res) => {
       console.log('Environment Config:', {
           MERCHANT_ID: MERCHANT_ID,
           SALT_INDEX,
-          PHONEPE_API_URL: process.env.PHONEPE_API_URL,
+          PAY_PAGE_URL,
           CALLBACK_URL: `https://books-plaza-production.up.railway.app/api/payment/phonepe-callback`
       });
 
@@ -760,7 +760,7 @@ app.post('/api/create-payment', async (req, res) => {
               timeout: 10000 
           }
       );
-
+      console.log(response.data)
       // Handle success response
       if (response.data?.success && response.data?.data?.instrumentResponse?.redirectInfo?.url) {
           await db.query(
@@ -786,6 +786,7 @@ app.post('/api/create-payment', async (req, res) => {
           status: response.status,
           data: response.data
       });
+      console.log(JSON.stringify(response));
       throw new Error(errorMessage);
 
   } catch (error) {
@@ -1003,80 +1004,69 @@ app.all('/api/payment-success', async (req, res) => {
       method: req.method,
       body: req.body,
       query: req.query,
-      // session: req.session
     });
 
-    let savedOrder = null;
     const merchantTransactionId = req.body.merchantTransactionId || req.query.merchantTransactionId;
     console.log('Looking for transaction:', merchantTransactionId);
-    console.log('Available sessions:', Object.keys(req.session || {}));
 
     if (!merchantTransactionId) {
       console.error('No transaction ID found in request');
       return res.status(400).json({ error: 'No transaction ID found' });
     }
 
-    // First check if order already exists in database
-    try {
-      const existingOrderQuery = 'SELECT * FROM orders WHERE transaction_id = $1';
-      const existingOrderResult = await db.query(existingOrderQuery, [merchantTransactionId]);
-      
-      if (existingOrderResult.rows.length > 0) {
-        const order = existingOrderResult.rows[0];
-        // Get order items
-        const itemsQuery = 'SELECT * FROM order_items WHERE order_id = $1';
-        const itemsResult = await db.query(itemsQuery, [order.order_id]);
-        
-        const completeOrder = {
-          orderId: order.order_id,
-          transactionId: order.transaction_id,
-          paymentId: order.payment_id,
-          amount: order.total_amount,
-          customerName: order.customer_name,
-          customerEmail: order.customer_email,
-          customerPhone: order.customer_phone,
-          shippingAddress: order.shipping_address,
-          items: itemsResult.rows,
-          status: order.payment_status,
-          createdAt: order.created_at
-        };
+    // Find order in database by transaction ID
+    const existingOrderResult = await db.query(
+      'SELECT * FROM orders WHERE transaction_id = $1',
+      [merchantTransactionId]
+    );
 
-        if (req.method === 'GET') {
-          return res.json({ order: completeOrder });
-        } else {
-          return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?order=${encodeURIComponent(JSON.stringify(completeOrder))}`);
-        }
+    if (existingOrderResult.rows.length > 0) {
+      const order = existingOrderResult.rows[0];
+
+      // Fetch complete order details (including order items)
+      const completeOrderQuery = `
+        SELECT o.*,
+          json_agg(
+            json_build_object(
+              'book_id', oi.book_id,
+              'quantity', oi.quantity,
+              'price', oi.price,
+              'title', b.title
+            )
+          ) as order_items
+        FROM orders o
+        LEFT JOIN order_items oi ON o.order_id = oi.order_id
+        LEFT JOIN books b ON oi.book_id = b.book_id
+        WHERE o.order_id = $1
+        GROUP BY o.order_id`;
+
+      const completeOrderResult = await db.query(completeOrderQuery, [order.order_id]);
+      const completeOrder = completeOrderResult.rows[0];
+
+      // Corrected conditional statement
+      if (req.method === 'POST') { // Redirect on POST (from PhonePe)
+        return res.redirect(
+          `${process.env.FRONTEND_URL}/payment-success?orderId=${order.order_id}`
+        );
+      } else { // Handle GET requests (e.g., manual visits)
+        return res.json({ order: completeOrder });
       }
-    } catch (error) {
-      console.error('Error checking existing order:', error);
-      if (req.method === 'GET') {
-        return res.status(500).json({ error: 'Error checking order status' });
-      } else {
-        return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?error=Error checking order status`);
+    } else {
+        return res.redirect(
+          `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?error=Order not found`
+        );
       }
     }
-
-    
-
-        if (req.method === 'GET') {
-          return res.json({ order: savedOrder });
-        } else {
-          return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?order=${encodeURIComponent(JSON.stringify(savedOrder))}`);
-        }
-      } catch (saveError) {
-        console.error('Error saving order:', saveError);
-        console.error('Error details:', saveError.message);
-        console.error('Error stack:', saveError.stack);
-        if (req.method === 'GET') {
-          return res.status(500).json({ error: 'Error saving order' });
-        } else {
-          return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?error=Error saving order`);
-        }
-      }
-    
-
-  
-
+   catch (error) {
+    console.error('Error processing payment success:', error);
+    if (req.method === 'GET') {
+      return res.status(500).json({ error: 'Error processing payment success' });
+    } else {
+      return res.redirect(
+        `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?error=Error processing payment success`
+      );
+    }
+  }
 });
 
 // Payment failure handler (handles both GET and POST)
@@ -1443,3 +1433,4 @@ app.use(express.urlencoded({ extended: true }));
 app.listen(port, '0.0.0.0', () => {
   console.log(`Server running on port ${port}`);
 });
+
