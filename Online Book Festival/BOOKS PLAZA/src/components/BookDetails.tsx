@@ -59,7 +59,7 @@ const BookDetails: React.FC<BookDetailsProps> = ({ onAddToCart }) => {
           </div>
           <p className="text-xl text-black mb-4">{error || 'Book not found'}</p>
           <button
-            onClick={() => navigate(-1)}
+            onClick={() => navigate("/")}
             className="px-6 py-3 bg-gradient-to-r from-orange-400 to-yellow-400 text-black rounded-lg font-medium transform hover:scale-105 transition-transform"
           >
             Go Back
