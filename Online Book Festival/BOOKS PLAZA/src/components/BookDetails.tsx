@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { getBookDetails } from '../services/api';
 import { Book } from '../types';
 import { FaShoppingCart, FaArrowLeft } from 'react-icons/fa';
+import { Link } from 'react-router-dom';
 
 interface BookDetailsProps {
   onAddToCart: (book: Book) => void;
@@ -58,12 +59,12 @@ const BookDetails: React.FC<BookDetailsProps> = ({ onAddToCart }) => {
             <div className="w-full h-full border-4 border-orange-300 rounded-lg rotate-45"></div>
           </div>
           <p className="text-xl text-black mb-4">{error || 'Book not found'}</p>
-          <button
-            onClick={() => navigate("/")}
+          <Link
+            to="/"
             className="px-6 py-3 bg-gradient-to-r from-orange-400 to-yellow-400 text-black rounded-lg font-medium transform hover:scale-105 transition-transform"
           >
             Go Back
-          </button>
+          </Link>
         </div>
       </div>
     );
