@@ -74,7 +74,7 @@ const BookDetails: React.FC<BookDetailsProps> = ({ onAddToCart }) => {
     <div className="min-h-screen bg-gradient-to-br from-orange-50 to-yellow-50 pt-8 px-4 pb-8">
       {/* Back Button */}
       <button
-        onClick={() => navigate(-1)}
+        onClick={() => navigate("/")}
         className="flex items-center text-black mb-6"
       >
         <FaArrowLeft className="mr-2" />
