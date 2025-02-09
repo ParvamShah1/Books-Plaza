@@ -116,7 +116,7 @@ const BookDetails: React.FC<BookDetailsProps> = ({ onAddToCart }) => {
         {/* End Left Column */}
 
         {/* Right Column */}
-        <div className="space-y-6">
+        <div className="space-y-6 mt-5">
           {/* Details Section */}
           <div className="bg-white rounded-2xl shadow-lg p-6">
             <h2 className="text-lg font-bold text-black mb-4">Product Details</h2>
