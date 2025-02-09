@@ -14,13 +14,27 @@ import ReturnPolicy from './components/ReturnPolicy';
 import Terms from './components/Terms';
 import PaymentSuccess from './pages/PaymentSuccess';
 import Payment from './components/Payment';
+import { initGA, logPageView } from "./analytics";
+
 // PrivateRoute component (adjust as needed)
+
 const PrivateRoute = ({ children }: { children: React.ReactNode }) => {
   //... (your authentication logic)
 };
+const usePageTracking = () => {
+  const location = useLocation();
 
+  useEffect(() => {
+    logPageView();
+  }, [location]); // Log every time the route changes
+};
 function App() {
   const [cart, setCart] = useState<CartItem[]>([]); // Initialize as an empty array
+  useEffect(() => {
+    initGA(); // ✅ Initialize Google Analytics when the app starts
+  }, []);
+
+  usePageTracking(); // ✅ Track page views on route change
 
   useEffect(() => {
     // Get cart from local storage
