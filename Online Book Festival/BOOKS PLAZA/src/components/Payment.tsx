@@ -165,6 +165,8 @@ const Payment: React.FC = () => {
 
               <div className="mb-8">
                 <h2 className="text-xl font-semibold mb-2">Payment</h2>
+                <p>No COD Available</p>
+
                 <p>Please scan the QR code below to make the payment:</p>
                 <img src="https://res.cloudinary.com/dwujyrgrf/image/upload/v1739077570/WhatsApp_Image_2025-02-09_at_10.04.09_wxaevm.jpg" alt="UPI QR Code" className="mx-auto mt-5" />
                 <p className="mt-4">After making the payment, please upload a screenshot:</p>
