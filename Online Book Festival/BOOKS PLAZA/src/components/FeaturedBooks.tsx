@@ -5,10 +5,15 @@ import { Link } from 'react-router-dom';
 import { FaShoppingCart, FaBookOpen, FaChevronRight } from 'react-icons/fa';
 import { toast } from 'react-hot-toast';
 import { toastConfig } from '../utils/toastConfig';
+import { FaWhatsapp } from 'react-icons/fa';
 
 interface FeaturedBooksProps {
   onAddToCart: (book: Book) => void;
 }
+const handleWhatsAppClick = () => {
+  const message = encodeURIComponent('Hi! I have a question about Books Plaza.');
+  window.open(`https://wa.me/+918111000098?text=${message}`, '_blank');
+};
 
 const FeaturedBooks: React.FC<FeaturedBooksProps> = ({ onAddToCart }) => {
   const [books, setBooks] = useState<Book[]>([]);
@@ -160,6 +165,16 @@ const FeaturedBooks: React.FC<FeaturedBooksProps> = ({ onAddToCart }) => {
           <p className="text-xl">No books available in this category</p>
         </div>
       )}
+       <button
+        onClick={handleWhatsAppClick}
+        className="fixed bottom-6 right-6 w-14 h-14 bg-green-500 rounded-full shadow-lg flex items-center justify-center transform hover:scale-110 transition-transform z-50 group"
+        aria-label="Contact us on WhatsApp"
+      >
+        <FaWhatsapp className="text-white text-2xl" />
+        <span className="absolute right-full mr-4 bg-white px-4 py-2 rounded-lg shadow-lg text-sm font-medium text-gray-700 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity">
+          Chat with us
+        </span>
+      </button>
     </div>
   );
 };

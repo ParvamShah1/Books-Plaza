@@ -4,7 +4,7 @@ import { FaWhatsapp, FaEnvelope, FaMapMarkerAlt, FaClock } from 'react-icons/fa'
 const ContactUs: React.FC = () => {
   const handleWhatsAppClick = () => {
     const message = encodeURIComponent('Hi! I have a question about Books Plaza.');
-    window.open(`https://wa.me/+919876543210?text=${message}`, '_blank');
+    window.open(`https://wa.me/+918111000098?text=${message}`, '_blank');
   };
 
   return (
@@ -33,19 +33,19 @@ const ContactUs: React.FC = () => {
             {
               icon: <FaEnvelope className="text-orange-500" />,
               title: 'Email',
-              description: 'support@booksplaza.com',
-              action: () => window.location.href = 'mailto:support@booksplaza.com',
+              description: 'booksplazabo@gmail.com',
+              action: () => window.location.href = 'booksplazabo@gmail.com',
               actionText: 'Send Email'
             },
             {
               icon: <FaMapMarkerAlt className="text-purple-500" />,
               title: 'Address',
-              description: '123 Book Street, Literary Lane, Readers City - 400001',
+              description: 'SHOP NO 2, CHANDRALOK CHS LTD, L.T ROAD,BORIVALI WEST, Mumbai Suburban, Maharashtra, 400092',
             },
             {
               icon: <FaClock className="text-yellow-500" />,
               title: 'Business Hours',
-              description: 'Monday - Saturday: 9:00 AM - 6:00 PM',
+              description: 'Monday - Saturday: 9:00 AM - 9:00 PM',
             }
           ].map((item, index) => (
             <div key={index} className="bg-white rounded-xl p-6 shadow-lg transform hover:scale-105 transition-transform">
@@ -77,15 +77,14 @@ const ContactUs: React.FC = () => {
             {[
               {
                 question: 'How can I track my order?',
-                answer: 'Once your order is shipped, you will receive a tracking number via email. You can use this to track your package on our website.'
-              },
+                answer: 'Once your order is placed, you will receive a confirmation from us on your registered mobile number or email address provided during checkout. Please keep checking for updates.'              },
               {
                 question: 'What are your delivery timelines?',
-                answer: 'We typically deliver within 3-5 business days for domestic orders. International shipping may take 7-14 business days.'
+                answer: 'Standard delivery takes 5-7 business days. We appreciate your patience during the delivery process.'
               },
               {
                 question: 'Do you offer returns?',
-                answer: 'Yes, we offer a 30-day return policy for books in original condition. Please visit our Returns page for more details.'
+                answer: 'We currently do not offer returns or refunds on any purchases. All sales are final.'
               }
             ].map((faq, index) => (
               <div key={index} className="bg-gray-50 rounded-lg p-4">
