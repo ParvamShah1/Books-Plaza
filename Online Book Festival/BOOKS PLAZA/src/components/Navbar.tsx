@@ -25,7 +25,7 @@ const Navbar: React.FC<NavbarProps> = ({ cartItemCount }) => {
           <div className="relative px-4 py-3 flex items-center justify-between">
             {/* Logo */}
             <Link to="/" className="flex items-center space-x-2">
-            <img src="/books plaza.png" alt="Books Plaza Logo" className="h-10 object-contain" />
+            <img src="https://res.cloudinary.com/dwujyrgrf/image/upload/v1739079287/books-plaza/1739079284493-350025917_bvznhl.png" alt="Books Plaza Logo" className="h-10 object-contain" />
               <span className="text-xl font-bold text-white">Books Plaza</span>
             </Link>
 
