@@ -89,7 +89,7 @@ const BookDetails: React.FC<BookDetailsProps> = ({ onAddToCart }) => {
               <img
                 src={book.image_url}
                 alt={book.title}
-                className="absolute inset-0 w-full h-full object-cover"
+                className="absolute inset-0 w-full h-full object-fit"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent"></div>
             </div>
@@ -106,9 +106,9 @@ const BookDetails: React.FC<BookDetailsProps> = ({ onAddToCart }) => {
               <p className="text-gray-800">{book.description}</p>
               <div className="flex items-baseline space-x-2">
                 <span className="text-2xl font-bold text-black">₹{book.price}</span>
-                <span className="text-sm text-gray-500 line-through">
+                {/* <span className="text-sm text-gray-500 line-through">
                   ₹{Math.round(book.price * 1.2)}
-                </span>
+                </span> */}
               </div>
             </div>
           </div>

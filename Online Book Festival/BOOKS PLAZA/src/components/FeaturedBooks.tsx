@@ -140,9 +140,9 @@ const FeaturedBooks: React.FC<FeaturedBooksProps> = ({ onAddToCart }) => {
                 <p className="text-xs text-gray-600 mb-2">By {book.author}</p>
                 <div className="flex items-center justify-start gap-2">
                   <p className="text-sm font-bold text-black">₹{book.price}</p>
-                  <span className="text-sm font-bold text-gray-500 line-through">
+                  {/* <span className="text-sm font-bold text-gray-500 line-through">
                     ₹{Math.round(book.price * 1.2)}
-                  </span>
+                  </span> */}
                 </div>
               </div>
 
