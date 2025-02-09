@@ -13,7 +13,7 @@ import ContactUs from './components/ContactUs';
 import ReturnPolicy from './components/ReturnPolicy';
 import Terms from './components/Terms';
 import PaymentSuccess from './pages/PaymentSuccess';
-
+import Payment from './components/Payment';
 // PrivateRoute component (adjust as needed)
 const PrivateRoute = ({ children }: { children: React.ReactNode }) => {
   //... (your authentication logic)
@@ -121,6 +121,8 @@ function App() {
             />
             <Route path="/admin" element={<Admin />} />
             <Route path="/about" element={<AboutUs />} />
+            <Route path="/payment/:orderId" element={<Payment />} />
+
             <Route path="/terms-and-conditions" element={<Terms />} />
 
             <Route path="/contact" element={<ContactUs />} />

@@ -1,4 +1,3 @@
-// src/components/Admin.tsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
@@ -12,19 +11,32 @@ interface OrderItem {
   title: string;
   quantity: number;
   price: number;
+  book_image: string | null;
 }
 
 interface Order {
   order_id: number;
   order_date: string;
-  total_amount: number;
+  total_amount: string; // Keep as string, since it's coming as string
   payment_status: string;
-  shipping_address: string;
-  razorpay_order_id: string;
+  shipping_address: { // Define the structure of shipping_address
+    address: string;
+    apartment: string;
+    city: string;
+    country: string;
+    firstName: string;
+    lastName: string;
+    state: string;
+    zip: string;
+  } | string; // It can be a string (for parsing) or the object
+  transaction_id: string | null;
   payment_id: string;
   items: OrderItem[];
+  razorpay_order_id?: string; // Optional, in case it's not always present
+  customer_name: string;     // Add customer_name
+  customer_email: string;    // Add customer_email
+  customer_phone: string;    // Add customer_phone
 }
-
 function Admin() {
   const navigate = useNavigate();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -57,67 +69,32 @@ function Admin() {
   const [error, setError] = useState<string | null>(null);
   const [isbn, setIsbn] = useState('');
 
-  const genreOptions = [
-    'Fiction',
-    'Non-Fiction',
-    'Mystery',
-    'Science Fiction',
-    'Fantasy',
-    'Romance',
-    'Thriller',
-    'Horror',
-    'Biography',
-    'History',
-    'Science',
-    'Technology',
-    'Self-Help',
-    'Children',
-    'Young Adult',
-    'Poetry',
-    'Drama',
-    'Other'
-  ];
-
-  const languageOptions = [
-    'English',
-    'Spanish',
-    'French',
-    'German',
-    'Italian',
-    'Portuguese',
-    'Russian',
-    'Chinese',
-    'Japanese',
-    'Korean',
-    'Hindi',
-    'Arabic',
-    'Other'
-  ];
+    const genreOptions = [
+        'Fiction', 'Non-Fiction', 'Mystery', 'Science Fiction', 'Fantasy',
+        'Romance', 'Thriller', 'Horror', 'Biography', 'History', 'Science',
+        'Technology', 'Self-Help', 'Children', 'Young Adult', 'Poetry', 'Drama', 'Other'
+    ];
+    const languageOptions = [
+        'English', 'Spanish', 'French', 'German', 'Italian', 'Portuguese',
+        'Russian', 'Chinese', 'Japanese', 'Korean', 'Hindi', 'Arabic', 'Other'
+    ];
 
   const handleCodeSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (adminCode === ADMIN_CODE) {
       setIsAuthenticated(true);
-      setAdminCode(''); // Clear the code input
+      setAdminCode('');
       toast.success('Access granted');
     } else {
       toast.error('Invalid admin code');
-      setAdminCode(''); // Clear the code input on error
+      setAdminCode('');
     }
   };
 
-  const fetchBooks = async () => {
+   const fetchBooks = async () => {
     setIsLoading(true);
     try {
-      const response = await getAdminBooks(
-        currentPage,
-        10,
-        search,
-        sortBy,
-        sortOrder,
-        filters
-      );
-      
+      const response = await getAdminBooks(currentPage, 10, search, sortBy, sortOrder, filters);
       setBooks(response.books || []);
       setTotalBooks(response.totalBooks || 0);
       setTotalPages(response.totalPages || 1);
@@ -133,31 +110,43 @@ function Admin() {
     }
   };
 
-  const fetchOrders = async () => {
-    if (!isAuthenticated) return;
-    
-    try {
-      setIsLoading(true);
-      const response = await getOrders();
-      // Ensure response is an array, if not, use empty array
-      setOrders(Array.isArray(response) ? response : []);
-      console.log('Orders fetched:', response);
-    } catch (error) {
-      console.error('Error fetching orders:', error);
-      toast.error('Failed to fetch orders');
-      if (error?.response?.status === 401) {
-        setIsAuthenticated(false);
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
-  useEffect(() => {
-    if (isAuthenticated) {
-      fetchBooks();
-    }
-  }, [currentPage, search, sortBy, sortOrder, filters, isAuthenticated]);
+    const fetchOrders = async () => {
+        if (!isAuthenticated) return;
+
+        try {
+            setIsLoading(true);
+            const response = await getOrders();
+            if (Array.isArray(response)) {
+                setOrders(response);
+            } else {
+                console.error("Unexpected response from getOrders:", response);
+                setOrders([]);
+                toast.error("Failed to fetch orders: Invalid data received.");
+            }
+        } catch (error: any) {
+            console.error('Error fetching orders:', error);
+            toast.error('Failed to fetch orders');
+            if (error?.response?.status === 401) {
+                setIsAuthenticated(false);
+            }
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+
+    useEffect(() => {
+        if (isAuthenticated) {
+            fetchBooks();
+        }
+    }, [currentPage, search, sortBy, sortOrder, filters, isAuthenticated]);
+
+    useEffect(() => {
+        if (isAuthenticated && activeTab === 'orders') {
+            fetchOrders();
+        }
+    }, [isAuthenticated, activeTab]);
 
   const handleEdit = (book: Book) => {
     setSelectedBook(book);
@@ -169,19 +158,18 @@ function Admin() {
       genre: book.genre,
       language: book.language,
       image: null,
-      publisher: book.publisher || '',         // Now pre-filled with the book's publisher if available
-      publishDate: book.publishDate || '',       // Pre-fill publish date
-      pages: book.pages ? book.pages.toString() : ''  // Convert pages to string if it exists
+      publisher: book.publisher || '',
+      publishDate: book.publishDate || '',
+      pages: book.pages ? book.pages.toString() : ''
     });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.title || !formData.author || !formData.price || !formData.genre || !formData.language) {
       toast.error('Please fill in all required fields');
       return;
     }
-
     try {
       setIsLoading(true);
       const form = new FormData();
@@ -191,16 +179,13 @@ function Admin() {
       form.append("price", formData.price);
       form.append("genre", formData.genre);
       form.append("language", formData.language);
-
       form.append("isbn", isbn);
       form.append("publisher", formData.publisher);
       form.append("publishDate", formData.publishDate);
       form.append("pages", formData.pages);
-
       if (formData.image) {
         form.append('image', formData.image);
       }
-
       if (selectedBook) {
         await updateBook(selectedBook.book_id, form);
         toast.success('Book updated successfully');
@@ -208,7 +193,6 @@ function Admin() {
         await uploadBook(form);
         toast.success('Book added successfully');
       }
-
       setFormData({
         title: '',
         author: '',
@@ -233,100 +217,26 @@ function Admin() {
       setIsLoading(false);
     }
   };
-
-  // Update the books state to include sorting
-  const sortedBooks = books
-    .filter(book => !book.deleted_at) // Only show non-deleted books
+   const sortedBooks = books
+    .filter(book => !book.deleted_at)
     .sort((a, b) => {
-      // Sort by active status first
       if (a.is_active !== b.is_active) {
         return a.is_active ? -1 : 1;
       }
-      // Then sort by title
       return a.title.localeCompare(b.title);
     });
 
-  // Update the books table section
-  <tbody className="bg-white divide-y divide-gray-200">
-    {sortedBooks.map((book) => (
-      <tr key={book.book_id}>
-        <td className="px-6 py-4 whitespace-nowrap">
-          <div className="text-sm font-medium text-gray-900">{book.title}</div>
-        </td>
-        <td className="px-6 py-4 whitespace-nowrap">
-          <div className="text-sm text-gray-500">{book.author}</div>
-        </td>
-        <td className="px-6 py-4 whitespace-nowrap">
-          <div className="text-sm text-gray-900">₹{book.price}</div>
-        </td>
-        <td className="px-6 py-4 whitespace-nowrap">
-          <div className="text-sm text-gray-500">{book.genre}</div>
-        </td>
-        <td className="px-6 py-4 whitespace-nowrap">
-          <div className="text-sm text-gray-500">{book.language}</div>
-        </td>
-        <td className="px-6 py-4 whitespace-nowrap">
-          <span
-            onClick={() => handleToggleStatus(book.book_id, book.is_active)}
-            className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full cursor-pointer hover:opacity-80 ${
-              book.is_active
-                ? 'bg-green-100 text-green-800'
-                : 'bg-red-100 text-red-800'
-            }`}
-          >
-            {book.is_active ? 'Active' : 'Inactive'}
-          </span>
-        </td>
-        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-          <button
-            onClick={() => handleEdit(book)}
-            className="text-orange-600 hover:text-orange-900"
-          >
-            Edit
-          </button>
-          <button
-            onClick={() => handleDelete(book.book_id)}
-            className="text-red-600 hover:text-red-900"
-          >
-            Delete
-          </button>
-        </td>
-      </tr>
-    ))}
-  </tbody>
 
-  // Update the handleDelete function
   const handleDelete = async (bookId: number) => {
     if (!window.confirm('Are you sure you want to delete this book?')) return;
-
     try {
       setIsLoading(true);
       await deleteBook(bookId);
-      toast.success('Book deleted successfully', {
-        style: {
-          background: 'white',
-          color: 'black',
-          borderRadius: '12px',
-          boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-          padding: '12px 24px',
-        },
-        position: 'bottom-right',
-        icon: '🗑️',
-      });
-      fetchBooks(); // This will refresh the list with only non-deleted books
+      toast.success('Book deleted successfully');
+      fetchBooks();
     } catch (error) {
       console.error('Error deleting book:', error);
-      toast.error('Failed to delete book', {
-        style: {
-          background: 'white',
-          color: 'black',
-          borderRadius: '12px',
-          boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-          padding: '12px 24px',
-        },
-        position: 'bottom-right',
-        icon: '❌',
-      });
+      toast.error('Failed to delete book');
       if (error?.response?.status === 401) {
         setIsAuthenticated(false);
       }
@@ -344,7 +254,7 @@ function Admin() {
     } catch (error) {
       console.error('Error updating book status:', error);
       toast.error('Failed to update book status');
-      if (error?.response?.status === 401) {
+       if (error?.response?.status === 401) {
         setIsAuthenticated(false);
       }
     } finally {
@@ -357,15 +267,10 @@ function Admin() {
       toast.error("Please enter an ISBN");
       return;
     }
-
     try {
       const bookData = await getBookByISBN(isbn);
       if (bookData) {
-        // Debug: log the fetched data to verify field names
         console.log("Fetched bookData:", bookData);
-
-        // Prefill the form with the fetched data.
-        // Google Books API should return publishedDate, pageCount, and language if available.
         setFormData({
           ...formData,
           title: bookData.title || '',
@@ -389,7 +294,8 @@ function Admin() {
 
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-gray-100 py-6 flex flex-col justify-center sm:py-12">
+      /* ... (Your login form, unchanged) ... */
+       <div className="min-h-screen bg-gray-100 py-6 flex flex-col justify-center sm:py-12">
         <div className="relative py-3 sm:max-w-xl sm:mx-auto">
           <div className="absolute inset-0 bg-gradient-to-r from-blue-300 to-blue-600 shadow-lg transform -skew-y-6 sm:skew-y-0 sm:-rotate-6 sm:rounded-3xl"></div>
           <div className="relative px-4 py-10 bg-white shadow-lg sm:rounded-3xl sm:p-20">
@@ -423,13 +329,14 @@ function Admin() {
     );
   }
 
-  if (error) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
+    if (error) {
+        return (
+            /* ... (Your error display, unchanged) ... */
+            <div className="min-h-screen flex items-center justify-center">
         <div className="bg-white p-8 rounded-lg shadow-md">
           <h2 className="text-red-600 text-xl font-bold mb-4">Error</h2>
           <p className="text-gray-600">{error}</p>
-          <button 
+          <button
             onClick={() => window.location.reload()}
             className="mt-4 bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
           >
@@ -437,8 +344,9 @@ function Admin() {
           </button>
         </div>
       </div>
-    );
-  }
+        );
+    }
+
 
   return (
     <div className="container mx-auto p-4">
@@ -447,21 +355,19 @@ function Admin() {
         <div className="space-x-4">
           <button
             onClick={() => setActiveTab('books')}
-            className={`px-4 py-2 rounded ${
-              activeTab === 'books'
+            className={`px-4 py-2 rounded ${activeTab === 'books'
                 ? 'bg-blue-600 text-white'
                 : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-            }`}
+              }`}
           >
             Manage Books
           </button>
           <button
             onClick={() => setActiveTab('orders')}
-            className={`px-4 py-2 rounded ${
-              activeTab === 'orders'
+            className={`px-4 py-2 rounded ${activeTab === 'orders'
                 ? 'bg-blue-600 text-white'
                 : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-            }`}
+              }`}
           >
             View Orders
           </button>
@@ -469,6 +375,7 @@ function Admin() {
       </div>
 
       {activeTab === 'books' ? (
+        /* ... (Your entire book management section remains unchanged) ... */
         <div>
           <div className="mb-4 flex items-center">
             <input
@@ -485,7 +392,7 @@ function Admin() {
               Lookup Book
             </button>
           </div>
-
+          {/* ... (Rest of your book management code remains the same) ... */}
           <div className="bg-white p-6 rounded-lg shadow-md mb-8">
             <h2 className="text-xl font-semibold mb-4">
               {selectedBook ? 'Edit Book' : 'Add New Book'}
@@ -519,13 +426,18 @@ function Admin() {
                   />
                 </div>
                 <div className="mb-4 col-span-2">
-                  <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="description">
-                    Description:
-                  </label>
-                  <textarea
-                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none h-48"
-                    id="description"
-                    placeholder="Description"
+                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="description">
+
+Description:
+
+</label>
+
+<textarea
+
+className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none h-48"
+
+id="description"
+placeholder="Description"
                     value={formData.description}
                     onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   ></textarea>
@@ -625,7 +537,6 @@ function Admin() {
                   />
                 </div>
               </div>
-
               <div className="flex justify-end space-x-3">
                 {selectedBook && (
                   <button
@@ -660,7 +571,6 @@ function Admin() {
               </div>
             </form>
           </div>
-
           <div className="bg-white rounded-lg shadow-md">
             <div className="p-6">
               <div className="flex justify-between items-center mb-4">
@@ -675,7 +585,6 @@ function Admin() {
                   />
                 </div>
               </div>
-
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
@@ -724,11 +633,10 @@ function Admin() {
                         <td className="px-6 py-4 whitespace-nowrap">
                           <span
                             onClick={() => handleToggleStatus(book.book_id, book.is_active)}
-                            className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full cursor-pointer hover:opacity-80 ${
-                              book.is_active
+                            className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full cursor-pointer hover:opacity-80 ${book.is_active
                                 ? 'bg-green-100 text-green-800'
                                 : 'bg-red-100 text-red-800'
-                            }`}
+                              }`}
                           >
                             {book.is_active ? 'Active' : 'Inactive'}
                           </span>
@@ -752,7 +660,6 @@ function Admin() {
                   </tbody>
                 </table>
               </div>
-
               <div className="flex justify-between items-center mt-4">
                 <div className="text-sm text-gray-700">
                   Showing {(currentPage - 1) * 10 + 1} to{' '}
@@ -778,27 +685,20 @@ function Admin() {
             </div>
           </div>
         </div>
+
       ) : (
+        // Orders Section
         <div className="grid gap-6">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-semibold">Orders</h2>
             <div className="space-x-4">
-              <button
-                onClick={() => setOrderStatusFilter('all')}
-                className={`px-4 py-2 rounded ${orderStatusFilter === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
-              >
+              <button onClick={() => setOrderStatusFilter('all')} className={`px-4 py-2 rounded ${orderStatusFilter === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>
                 All Orders
               </button>
-              <button
-                onClick={() => setOrderStatusFilter('Completed')}
-                className={`px-4 py-2 rounded ${orderStatusFilter === 'Completed' ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
-              >
+              <button onClick={() => setOrderStatusFilter('Completed')} className={`px-4 py-2 rounded ${orderStatusFilter === 'Completed' ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>
                 Completed Orders
               </button>
-              <button
-                onClick={() => setOrderStatusFilter('Pending')}
-                className={`px-4 py-2 rounded ${orderStatusFilter === 'Pending' ? 'bg-yellow-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
-              >
+              <button onClick={() => setOrderStatusFilter('Pending')} className={`px-4 py-2 rounded ${orderStatusFilter === 'Pending' ? 'bg-yellow-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>
                 Pending Orders
               </button>
             </div>
@@ -812,104 +712,151 @@ function Admin() {
             orders
               .filter(order => orderStatusFilter === 'all' || order.payment_status === orderStatusFilter)
               .map((order) => {
-              const address = typeof order.shipping_address === 'string' 
-                ? JSON.parse(order.shipping_address) 
-                : order.shipping_address;
-              
-              return (
-                <div key={order.order_id} className="bg-white rounded-lg shadow-md p-6">
-                  <div className="flex justify-between items-start mb-4">
-                    <div>
-                      <h2 className="text-xl font-semibold">Order #{order.order_id}</h2>
-                      <p className="text-gray-600">
-                        {new Date(order.order_date).toLocaleDateString('en-US', {
-                          year: 'numeric',
-                          month: 'long',
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <div className="flex items-center space-x-2">
-                        <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                        order.payment_status === 'Completed' 
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-yellow-100 text-yellow-800'
-                      }`}>
-                        {order.payment_status}
-                      </span>
-                        <button
-                          onClick={async () => {
-                            try {
-                              const newStatus = order.payment_status === 'Completed' ? 'Pending' : 'Completed';
-                              await updateOrderStatus(order.order_id, newStatus);
-                              toast.success(`Order marked as ${newStatus}`);
-                              fetchOrders();
-                            } catch (error) {
-                              toast.error('Failed to update order status');
-                            }
-                          }}
-                          className={`px-2 py-1 rounded text-sm ${order.payment_status === 'Completed' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'} hover:opacity-80`}
-                        >
-                          Mark as {order.payment_status === 'Completed' ? 'Pending' : 'Completed'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
+                // Parse shipping address safely and correctly handle object/string
+                let address = { street: '', city: '', state: '', postalCode: '', country: '', firstName: '', lastName: '', apartment: '' };
+                try {
+                  if (typeof order.shipping_address === 'string') {
+                      const parsedAddress = JSON.parse(order.shipping_address);
+                        address = {
+                            firstName: parsedAddress.firstName || '',
+                            lastName: parsedAddress.lastName || '',
+                            street: parsedAddress.address || '', // Use 'address' for street
+                            apartment: parsedAddress.apartment || '',
+                            city: parsedAddress.city || '',
+                            state: parsedAddress.state || '',
+                            postalCode: parsedAddress.zip || '',  // Use 'zip' for postal code
+                            country: parsedAddress.country || '',
+                        };
+                    } else if (order.shipping_address && typeof order.shipping_address === 'object') {
+                       address = {
+                            firstName: order.shipping_address.firstName || '',
+                            lastName: order.shipping_address.lastName || '',
+                            street: order.shipping_address.address || '', // Use 'address' for street
+                            apartment: order.shipping_address.apartment || '',
+                            city: order.shipping_address.city || '',
+                            state: order.shipping_address.state || '',
+                            postalCode: order.shipping_address.zip || '',  // Use 'zip'
+                            country: order.shipping_address.country || '',
+                        };
+                    }
+                } catch (error) {
+                  console.error("Error parsing shipping address:", order.shipping_address, error);
+                }
 
-                  <div className="border-t border-gray-200 pt-4">
-                    <h3 className="font-semibold mb-2">Items</h3>
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-gray-200">
-                        <thead>
-                          <tr className="bg-gray-50">
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Item</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Quantity</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Price</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Total</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-200">
-                          {order.items.map((item) => (
-                            <tr key={item.id}>
-                              <td className="px-4 py-2">{item.title}</td>
-                              <td className="px-4 py-2">{item.quantity}</td>
-                              <td className="px-4 py-2">₹{item.price.toFixed(2)}</td>
-                              <td className="px-4 py-2">₹{(item.price * item.quantity).toFixed(2)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <h3 className="font-semibold mb-2">Shipping Address</h3>
-                      <div className="text-gray-600">
-                        <p>{address.street}</p>
-                        <p>{address.city}, {address.state}</p>
-                        <p>{address.postalCode}</p>
-                        <p>{address.country}</p>
-                      </div>
-                    </div>
-                    
-                    <div>
-                      <h3 className="font-semibold mb-2">Payment Details</h3>
-                      <div className="text-gray-600">
-                        <p>Transaction ID: {order.razorpay_order_id}</p>
-                        <p>Payment ID: {order.payment_id}</p>
-                        <p className="font-medium text-lg mt-2">
-                          Total Amount: ₹{parseFloat(order.total_amount).toFixed(2)}
+                return (
+                  <div key={order.order_id} className="bg-white rounded-lg shadow-md p-6 mb-4">
+                    <div className="flex justify-between items-start mb-4">
+                      <div>
+                        <h2 className="text-xl font-semibold">Order #{order.order_id}</h2>
+                        <p className="text-gray-600">
+                          {new Date(order.order_date).toLocaleDateString('en-US', {
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
                         </p>
+                         <p className="text-gray-700">Customer: {order.customer_name} ({order.customer_email})</p> {/* Display customer details */}
+                        <p className="text-gray-700">Phone: {order.customer_phone}</p>
+
+                      </div>
+                      <div className="text-right">
+                        <div className="flex items-center space-x-2">
+                          <span
+                            className={`px-3 py-1 rounded-full text-sm font-medium ${order.payment_status === 'Completed'
+                              ? 'bg-green-100 text-green-800'
+                              : order.payment_status === 'Pending'
+                                ? 'bg-yellow-100 text-yellow-800'
+                                : 'bg-blue-100 text-blue-800' // Add a color for 'Uploaded'
+                              }`}
+                          >
+                            {order.payment_status}
+                          </span>
+                          <button
+                            onClick={async () => {
+                              try {
+                                const newStatus = order.payment_status === 'Completed' ? 'Pending' : 'Completed';
+                                await updateOrderStatus(order.order_id, newStatus);
+                                toast.success(`Order marked as ${newStatus}`);
+                                fetchOrders();
+                              } catch (error) {
+                                toast.error('Failed to update order status');
+                              }
+                            }}
+                            className={`px-2 py-1 rounded text-sm ${order.payment_status === 'Completed' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'} hover:opacity-80`}
+                          >
+                            Mark as {order.payment_status === 'Completed' ? 'Pending' : 'Completed'}
+                          </button>
+                        </div>
                       </div>
                     </div>
+
+                    <div className="border-t border-gray-200 pt-4">
+                      <h3 className="font-semibold mb-2">Items</h3>
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                          <thead>
+                            <tr className="bg-gray-50">
+                              <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Item</th>
+                              <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Quantity</th>
+                              <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Price</th>
+                              <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Total</th>
+                               <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Image</th> {/* Add Image Column */}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-200">
+                            {order.items.map((item) => (
+                              <tr key={item.id}>
+                                <td className="px-4 py-2">{item.title}</td>
+                                <td className="px-4 py-2">{item.quantity}</td>
+                                <td className="px-4 py-2">₹{item.price.toFixed(2)}</td>
+                                <td className="px-4 py-2">₹{(item.price * item.quantity).toFixed(2)}</td>
+                                 <td className="px-4 py-2">
+                                  {item.book_image && (
+                                    <img src={item.book_image} alt={item.title} className="h-12 w-12 object-contain" />
+                                     )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <h3 className="font-semibold mb-2">Shipping Address</h3>
+                        <div className="text-gray-600">
+                            <p>{address.firstName} {address.lastName}</p>
+                            <p>{address.street} {address.apartment}</p>
+                            <p>{address.city}, {address.state} {address.postalCode}</p>
+                            <p>{address.country}</p>
+                        </div>
+                      </div>
+
+                      <div>
+                        <h3 className="font-semibold mb-2">Payment Details</h3>
+                        <div className="text-gray-600">
+                          <p>Transaction ID: {order.transaction_id || 'N/A'}</p> {/* Handle null */}
+                          <p>Payment ID: {order.payment_id}</p>  {/* Keep as is, for the link later */}
+                          {/* <p>Razorpay Order ID: {order.razorpay_order_id || 'N/A'}</p>  Handle potential undefined */}
+                          <p className="font-medium text-lg mt-2">
+                            Total Amount: ₹{order.total_amount}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                      {/* Image Preview (Conditional) */}
+                    {order.payment_id && (
+                        <div className="mt-4">
+                            <h3 className="font-semibold mb-2 ">Payment Receipt</h3>
+                            <img src={order.payment_id} alt="Payment Receipt" className="max-w-full h-16 object-cover" />                    
+                                </div>
+                    )}
                   </div>
-                </div>
-              );
-            })
+                );
+              })
           )}
         </div>
       )}

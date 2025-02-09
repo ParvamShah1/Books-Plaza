@@ -3,6 +3,7 @@ import { API_BASE_URL } from '../config';
 import { createPayment, createOrder } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
+import axios from 'axios'; // Import axios
 
 interface CartItem {
   book_id: number;
@@ -93,6 +94,7 @@ const CheckoutForm: React.FC<CheckoutFormProps> = ({ cart, onCheckoutComplete })
 
     try {
       // 1. Create order
+      // ... existing code ...
       const orderData = {
         items: cart.map(item => ({
           book_id: item.book_id,
@@ -114,38 +116,90 @@ const CheckoutForm: React.FC<CheckoutFormProps> = ({ cart, onCheckoutComplete })
         customer_phone: formData.phone,
         total_amount: cart.reduce((total, item) => total + item.price * item.quantity, 0)
       };
+      const response = await axios.post(`${API_BASE_URL}/orders`, orderData);
+      // ... existing code ...
 
-      console.log('Creating order with data:', orderData);
-      const orderResponse = await createOrder(orderData);
-      console.log('Order created:', orderResponse);
+      console.log("orderData being sent:", orderData);
+      const createdOrder = response.data; // This now contains the redirectUrl
 
-      // 2. Create payment
-      const paymentData = {
-        orderId: orderResponse.order_id,
-        amount: orderResponse.total_amount,
-        customerName: orderResponse.customer_name,
-        customerEmail: orderResponse.customer_email,
-        customerPhone: orderResponse.customer_phone
-      };
-
-      console.log('Creating payment with data:', paymentData);
-      const paymentResponse = await createPayment(paymentData);
-      console.log('Payment created:', paymentResponse);
-
-      // 3. Redirect to payment gateway
-      if (paymentResponse.redirectUrl) {
-        window.location.href = paymentResponse.redirectUrl;
+      // Redirect to the payment URL received from the backend
+      if (createdOrder.redirectUrl) {
+        window.location.href = createdOrder.redirectUrl;
+        localStorage.removeItem('cart'); // Clear cart on successful redirect
+        onCheckoutComplete(); // Notify that checkout is complete
       } else {
-        throw new Error('No redirect URL received from payment gateway');
+        // Handle the case where the backend didn't return a redirect URL
+        throw new Error('Payment initiation failed: No redirect URL received from backend');
       }
-
-    } catch (err: any) {
-      console.error('Checkout error:', err);
-      setError(err.message || 'An error occurred during checkout');
-      toast.error(err.message || 'Checkout failed');
+    } catch (error: any) {
+      console.error('Checkout error:', error);
+      toast.error(error.message || 'An unexpected error occurred');
+      setError(error.message || 'An unexpected error occurred');
     } finally {
       setLoading(false);
     }
+  
+
+// ... existing code ...
+      // const createdOrder = response.data;
+
+      // 2. Create payment
+      // const paymentData = {
+      //   orderId: createdOrder.order_id,
+      //   amount: total,
+      //   customerName: `${formData.firstName} ${formData.lastName}`,
+      //   customerEmail: formData.email,
+      //   customerPhone: formData.phone,
+      // };
+      // const paymentResponse = await createPayment(paymentData);
+
+      // if (paymentResponse.redirectUrl) {
+      //   window.location.href = paymentResponse.redirectUrl;
+      //   localStorage.removeItem('cart');
+      //   onCheckoutComplete();
+      // } else {
+      //   throw new Error('Payment initiation failed: No redirect URL received');
+      // }
+    // } catch (error: any) {
+    //   console.error('Checkout error:', error);
+    //   toast.error(error.message || 'An unexpected error occurred');
+    //   setError(error.message || 'An unexpected error occurred');
+    // } finally {
+    //   setLoading(false);
+    // }
+  
+// ... existing code ...
+      // console.log('Creating order with data:', orderData);
+      // const orderResponse = await createOrder(orderData);
+      // console.log('Order created:', orderResponse);
+
+      // // 2. Create payment
+      // const paymentData = {
+      //   orderId: orderResponse.order_id,
+      //   amount: orderResponse.total_amount,
+      //   customerName: orderResponse.customer_name,
+      //   customerEmail: orderResponse.customer_email,
+      //   customerPhone: orderResponse.customer_phone
+      // };
+
+      // console.log('Creating payment with data:', paymentData);
+      // const paymentResponse = await createPayment(paymentData);
+      // console.log('Payment created:', paymentResponse);
+
+      // // 3. Redirect to payment gateway
+      // if (paymentResponse.redirectUrl) {
+      //   window.location.href = paymentResponse.redirectUrl;
+      // } else {
+      //   throw new Error('No redirect URL received from payment gateway');
+      // }
+
+    // } catch (err: any) {
+    //   console.error('Checkout error:', err);
+    //   setError(err.message || 'An error occurred during checkout');
+    //   toast.error(err.message || 'Checkout failed');
+    // } finally {
+    //   setLoading(false);
+    // }
   };
 
   const renderCartItem = (item: CartItem) => (

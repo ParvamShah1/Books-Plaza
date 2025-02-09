@@ -398,7 +398,7 @@ app.get('/api/admin/orders', checkAdminCode, async (req, res) => {
           o.transaction_id,
           json_agg(
             json_build_object(
-              'id', oi.id,
+              'id', oi.book_id,
               'title', b.title,
               'quantity', oi.quantity,
               'price', oi.price
@@ -552,109 +552,66 @@ app.get('/api/books/:id', async (req, res) => {
 });
 
 // Create order endpoint
-app.post('/api/orders', async (req, res) => {
-    try {
-        console.log('Creating order with data:', req.body);
-        const { 
-            items, 
-            shipping_address, 
-            customer_name, 
-            customer_email, 
-            customer_phone,
-            total_amount 
-        } = req.body;
+// ... existing code ...
 
-        // Validate required fields
-        if (!customer_email || !customer_name || !customer_phone) {
-            return res.status(400).json({
-                error: 'Missing required customer details',
-                details: 'Email, name, and phone are required'
-            });
-        }
+app.post('/api/orders', [
+  // Validation middleware (keep this)
+  body('customer_email').isEmail().normalizeEmail().withMessage('Invalid email'),
+  body('customer_name').notEmpty().trim().escape().withMessage('Customer name is required'),
+  body('customer_phone').notEmpty().trim().withMessage('Customer phone is required'),
+  body('items').isArray({ min: 1 }).withMessage('At least one item is required'),
+  body('shipping_address').notEmpty().withMessage('Shipping address is required'),
+  body('total_amount').isFloat({ min: 0.01 }).withMessage('Total amount must be greater than 0')
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+  }
 
-        // Generate a unique transaction ID
-        const transactionId = `TXN_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const { items, shipping_address, customer_name, customer_email, customer_phone, total_amount } = req.body;
 
-        // Begin transaction
-        await db.query('BEGIN');
+  const client = await db.connect();
 
-        // Insert order with all required fields
-        const orderQuery = `
-            INSERT INTO orders (
-                payment_status,
-                total_amount,
-                shipping_address,
-                transaction_id,
-                customer_name,
-                customer_email,
-                customer_phone
-            ) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7) 
-            RETURNING *
-        `;
+  try {
+      await client.query('BEGIN');
 
-        const orderValues = [
-            'pending',                    // payment_status
-            total_amount,                 // total_amount
-            JSON.stringify(shipping_address), // shipping_address as JSONB
-            transactionId,               // transaction_id
-            customer_name,                // customer_name
-            customer_email,               // customer_email
-            customer_phone                // customer_phone
-        ];
+      // Insert order details
+      const orderResult = await client.query(
+          `INSERT INTO orders (customer_email, customer_name, customer_phone, shipping_address, total_amount, payment_status)
+     VALUES ($1, $2, $3, $4, $5,'pending') RETURNING order_id`,
+          [customer_email, customer_name, customer_phone, JSON.stringify(shipping_address), total_amount]
+      );
 
-        console.log('Executing order query with values:', orderValues);
+      const orderId = orderResult.rows[0].order_id;
 
-        const orderResult = await db.query(orderQuery, orderValues);
-        const order = orderResult.rows[0];
-        
-        console.log('Created order:', order);
+      // Insert order items
+      for (const item of items) {
+          await client.query(
+              `INSERT INTO order_items (order_id, book_id, quantity, price)
+       VALUES ($1, $2, $3, $4)`,
+              [orderId, item.book_id, item.quantity, item.price]
+          );
+      }
 
-        // Insert order items
-        for (const item of items) {
-            await db.query(
-                `INSERT INTO order_items (
-                    order_id,
-                    book_id,
-                    quantity,
-                    price
-                ) VALUES ($1, $2, $3, $4)`,
-                [order.order_id, item.book_id, item.quantity, parseFloat(item.price)]
-            );
-        }
+      await client.query('COMMIT');
 
-        await db.query('COMMIT');
+      // --- Return order details AND redirect URL ---
+      res.status(201).json({
+          order_id: orderId,
+          message: 'Order created successfully',
+          redirectUrl: `/payment/${orderId}`, //  Redirect to /payment
+      });
 
-        // Return the complete order data
-        const completeOrderQuery = `
-            SELECT o.*,
-                json_agg(
-                    json_build_object(
-                        'book_id', oi.book_id,
-                        'quantity', oi.quantity,
-                        'price', oi.price,
-                        'title', b.title
-                    )
-                ) as order_items
-            FROM orders o
-            LEFT JOIN order_items oi ON o.order_id = oi.order_id
-            LEFT JOIN books b ON oi.book_id = b.book_id
-            WHERE o.order_id = $1
-            GROUP BY o.order_id`;
-
-        const completeOrder = await db.query(completeOrderQuery, [order.order_id]);
-        
-        res.json(completeOrder.rows[0]);
-
-    } catch (error) {
-        await db.query('ROLLBACK');
-        console.error('Error creating order:', error);
-        res.status(500).json({ 
-            error: 'Failed to create order',
-            details: error.message
-        });
-    }
+  } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('Error creating order:', error);
+      res.status(500).json({ error: 'Failed to create order' });
+  } finally {
+      client.release();
+  }
 });
+
+// ... existing code ...
 
 // Debug middleware for sessions
 app.use((req, res, next) => {
@@ -675,17 +632,16 @@ const SALT_KEY = process.env.PHONEPE_SALT_KEY;
 const SALT_INDEX = process.env.PHONEPE_SALT_INDEX;
 
 // Enhanced X-VERIFY calculation
+
 const calculateXVerify = (base64Payload, path, saltKey, saltIndex) => {
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  const stringToHash = base64Payload + normalizedPath + saltKey;
-  console.log('Hash Input:', {
-      base64Payload,
-      normalizedPath,
-      saltKey: saltKey,  // Keep this for debugging
-      saltIndex
-  });
-  return crypto.createHash('sha256').update(stringToHash).digest('hex') + `###${saltIndex}`;
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+    const stringToHash = base64Payload + normalizedPath + saltKey;
+
+    console.log('Hash Input:', { base64Payload, normalizedPath, saltIndex }); // Removed saltKey for security
+    console.log(crypto.createHash('sha256').update(stringToHash, 'utf8').digest('hex') + `###${saltIndex}`);
+    return crypto.createHash('sha256').update(stringToHash, 'utf8').digest('hex') + `###${saltIndex}`;
 };
+
 
 // Create Payment Endpoint
 app.post('/api/create-payment', async (req, res) => {
@@ -786,10 +742,10 @@ app.post('/api/create-payment', async (req, res) => {
           status: response.status,
           data: response.data
       });
-      console.log(JSON.stringify(response));
       throw new Error(errorMessage);
 
   } catch (error) {
+      console.error(error);
       console.error('Payment Processing Error:', {
           message: error.message,
           stack: error.stack,
@@ -962,8 +918,14 @@ app.post('/api/payment/phonepe-callback', async (req, res) => {
 // Get order details endpoint
 app.get('/api/orders/:orderId', async (req, res) => {
     try {
-        const orderId = parseInt(req.params.orderId);
-        console.log('Fetching details for order:', orderId);
+      const orderIdString = req.params.orderId;
+
+      // --- Backend Validation ---
+      if (!orderIdString || isNaN(Number(orderIdString))) {
+          return res.status(400).json({ error: 'Invalid order ID' });
+      }
+      const orderId = parseInt(orderIdString, 10); // Specify radix 10
+      console.log('Fetching details for order:', orderId);
 
         const orderQuery = `
             SELECT o.*, 
@@ -1080,7 +1042,35 @@ app.all('/api/payment-failed', async (req, res) => {
   res.redirect(`${frontendUrl}/payment-failed`);
 });
 
+// Check PhonePe API Status
+app.get("/api/status", async (req, res) => {
+  try {
+    const merchantID = process.env.PHONEPE_MERCHANT_ID;
+    const statusUrl = `https://uptime.phonepe.com/v1/pg/merchants/${merchantID}/health`;
 
+    //  Calculate X-VERIFY header (even for the status check)
+    const path = `/v1/pg/merchants/${merchantID}/health`; // Path for X-VERIFY calculation
+    const xVerify = calculateXVerify('', path, process.env.PHONEPE_SALT_KEY, process.env.PHONEPE_SALT_INDEX); // Empty payload for GET
+    console.log(xVerify);
+    const response = await axios.get(statusUrl, {
+      headers: {
+        'X-VERIFY': xVerify, // Include X-VERIFY
+        // 'X-MERCHANT-ID': merchantID, // It's good practice to include the merchant ID
+        'Content-Type': 'application/json' // Always specify content type
+      },
+      timeout: 10000 // Set a reasonable timeout (10 seconds)
+    });
+
+    res.json(response.data); // Send the full response data from PhonePe
+  } catch (error) {
+    console.error('PhonePe Status Check Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'PhonePe status check failed',
+      details: error.response?.data || error.message // Safe access to error details
+    });
+  }
+});
 
 // Function to calculate total amount
 function calculateTotalAmount(items) {
@@ -1426,6 +1416,40 @@ app.put('/api/orders/:orderId/status', async (req, res) => {
     res.status(500).json({ error: 'Failed to update order status' });
   }
 });
+
+app.post('/api/upload-payment-screenshot', upload.single('image'), async (req, res) => {
+  try {
+    const { orderId } = req.body;
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image file provided' });
+    }
+    if (!orderId) {
+      return res.status(400).json({ error: 'Order ID is required' });
+    }
+
+    // Use your existing uploadToCloudinary function
+    const imageUrl = await uploadToCloudinary(req.file);
+
+      // Update the order in the database with the Cloudinary URL
+      const updateResult = await db.query(
+        'UPDATE orders SET payment_id = $1, payment_status = $2 WHERE order_id = $3 RETURNING *',
+        [imageUrl, 'Uploaded', orderId] // Set payment_status to 'Uploaded'
+      );
+
+      if (updateResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Order not found' }); // Should not happen, but good to check
+      }
+
+      res.json({ imageUrl: imageUrl });
+
+  } catch (error) {
+    console.error('Payment screenshot upload error:', error);
+    // The error handling is already pretty good in your uploadToCloudinary function,
+    // so we can just pass the error message along.
+    res.status(500).json({ error: error.message || 'Failed to process payment screenshot' });
+  }
+});
+
 
 // Add body-parser for x-www-form-urlencoded data
 app.use(express.urlencoded({ extended: true }));

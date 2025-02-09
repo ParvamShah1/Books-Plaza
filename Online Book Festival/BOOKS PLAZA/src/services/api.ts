@@ -235,13 +235,30 @@ export const createPayment = async (orderData: {
 };
 // NEW FUNCTION: Create Order
 export const createOrder = async (orderData: any) => {
-    try {
-        const response = await publicApi.post('/orders', orderData);
-        return response.data;
-    } catch (error) {
-        console.error('Error creating order:', error);
-        throw new Error('Failed to create order');
-    }
+  try {
+      const response = await publicApi.post('/orders', orderData);
+      return response.data;
+  } catch (error: any) { // Use type 'any' to access error properties
+      console.error('Error creating order:', error);
+      // Check if the error is an Axios error and has a response
+      if (error.response) {
+          // The request was made and the server responded with a status code
+          // that falls out of the range of 2xx
+          console.error('Error Data:', error.response.data);
+          console.error('Error Status:', error.response.status);
+          console.error('Error Headers:', error.response.headers);
+          // Provide a more specific error message, including details from the backend
+          throw new Error(`Failed to create order: ${error.response.data.error || 'Unknown server error'}`);
+      } else if (error.request) {
+          // The request was made but no response was received
+          console.error('Error Request:', error.request);
+          throw new Error('Failed to create order: No response from server');
+      } else {
+          // Something happened in setting up the request that triggered an Error
+          console.error('Error Message:', error.message);
+          throw new Error(`Failed to create order: ${error.message}`);
+      }
+  }
 };
 
 export const getOrderDetails = async (orderId: number) => {
@@ -324,3 +341,22 @@ export const getBookByISBN = async (isbn: string) => {
     throw error;
   }
 };
+async function getOrderById(orderId: string) {
+  const query = `
+      SELECT o.*,
+             json_agg(json_build_object(
+              'book_id', oi.book_id,
+              'quantity', oi.quantity,
+              'title', b.title,
+              'price', b.price
+             )) as items
+      FROM orders o
+      JOIN order_items oi ON o.order_id = oi.order_id
+      JOIN books b ON oi.book_id = b.book_id
+      WHERE o.order_id = $1
+      GROUP BY o.order_id;
+  `;
+
+  const result = await db.query(query, [orderId]);
+  return result.rows[0];
+}
