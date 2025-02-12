@@ -32,12 +32,7 @@ const PrivateRoute = ({ children }: { children: React.ReactNode }) => {
 // };
 function App() {
   const [cart, setCart] = useState<CartItem[]>([]); // Initialize as an empty array
-  // useEffect(() => {
-  //   initGA(); // ✅ Initialize Google Analytics when the app starts
-  // }, []);
-
-  // usePageTracking(); // ✅ Track page views on route change
-
+  
   useEffect(() => {
     // Get cart from local storage
     const storedCart = localStorage.getItem('cart');
@@ -135,7 +130,7 @@ function App() {
                 />
               } 
             />
-            <Route path="/admin" element={<Admin />} />
+            <Route path="/super" element={<Admin />} />
             <Route path="/about" element={<AboutUs />} />
             <Route path="/payment/:orderId" element={<Payment />} />
 
