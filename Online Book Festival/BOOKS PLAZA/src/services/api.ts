@@ -166,10 +166,17 @@ export const placeOrder = async (cartItems: Array<{ book_id: number; quantity: n
   }
 };
 
-export const getOrders = async () => {
+export const getOrders = async (page: number = 1, limit: number = 10) => {
   try {
-    const response = await api.get('/admin/orders');
-    return response.data.orders; // Return the orders array from the response
+    console.log('Requesting orders with:', { page, limit });
+    const response = await api.get('/admin/orders', {
+      params: {
+        page,
+        limit
+      }
+    });
+    console.log('Orders response:', response.data);
+    return response.data;
   } catch (error) {
     console.error('Error fetching orders:', error);
     throw error;

@@ -12,28 +12,27 @@ interface OrderItem {
 }
 
 interface ShippingAddress {
-  firstName: string;
-  lastName: string;
   address: string;
   apartment?: string;
   city: string;
   state: string;
-  zip: string;
-  email: string;
-  phone: string;
+  zipCode: string;
+  country: string;
 }
 
 interface Order {
   order_id: number;
   transaction_id: string;
-  total_amount: number;
+  payment_id: string;
+  total_amount: string;
   customer_name: string;
   customer_email: string;
   customer_phone: string;
-  shipping_address: ShippingAddress;
+  shipping_address: string | ShippingAddress;
   order_items: OrderItem[];
   payment_status: string;
   created_at: string;
+  updated_at: string;
 }
 
 const PaymentSuccess: React.FC = () => {
@@ -57,25 +56,11 @@ const PaymentSuccess: React.FC = () => {
           return;
         }
 
-        const orderDetails = await getOrderDetails(parseInt(orderId));
-        console.log('Order details:', orderDetails);
+        const response = await getOrderDetails(parseInt(orderId));
+        console.log('Order details response:', response);
 
-        if (orderDetails) {
-          // Handle shipping address
-          let shippingAddress = orderDetails.shipping_address;
-          if (typeof shippingAddress === 'string') {
-            try {
-              shippingAddress = JSON.parse(shippingAddress);
-            } catch (e) {
-              console.error('Error parsing shipping address:', e);
-            }
-          }
-          
-          setOrder({
-            ...orderDetails,
-            shipping_address: shippingAddress
-          });
-          
+        if (response.success && response.order) {
+          setOrder(response.order);
           localStorage.removeItem('cart');
           toast.success('Payment successful! Your order has been placed.');
         } else {
@@ -126,35 +111,67 @@ const PaymentSuccess: React.FC = () => {
         <div className="text-center mb-8">
           <h1 className="text-2xl font-bold text-green-600 mb-2">Payment Successful!</h1>
           <p className="text-gray-600">Order ID: {order.order_id}</p>
+          <p className="text-gray-600">Transaction ID: {order.transaction_id}</p>
+          <p className="text-gray-600">Payment ID: {order.payment_id}</p>
+          <p className="text-gray-600">Status: <span className="text-green-600 font-semibold">{order.payment_status}</span></p>
         </div>
 
         <div>
           <h2 className="text-xl font-semibold mb-3">Shipping Address</h2>
           <div className="bg-gray-50 p-4 rounded-lg">
-            <p>{order.shipping_address.firstName} {order.shipping_address.lastName}</p>
-            <p>{order.shipping_address.address}</p>
-            <p>{order.shipping_address.city}, {order.shipping_address.state} {order.shipping_address.zip}</p>
-            <p>Email: {order.shipping_address.email}</p>
-            <p>Phone: {order.shipping_address.phone}</p>
+            <p>{order.customer_name}</p>
+            {(() => {
+              try {
+                let shippingAddress;
+                if (typeof order.shipping_address === 'string') {
+                  shippingAddress = JSON.parse(order.shipping_address);
+                } else {
+                  shippingAddress = order.shipping_address;
+                }
+                
+                if (!shippingAddress) {
+                  return <p className="text-red-500">Shipping address not available</p>;
+                }
+
+                return (
+                  <>
+                    <p>{shippingAddress.address}</p>
+                    <p>{shippingAddress.city}, {shippingAddress.state} {shippingAddress.zipCode}</p>
+                  </>
+                );
+              } catch (error) {
+                console.error('Error parsing shipping address:', error);
+                return <p className="text-red-500">Error displaying shipping address</p>;
+              }
+            })()}
+            <p>Email: {order.customer_email}</p>
+            <p>Phone: {order.customer_phone}</p>
           </div>
         </div>
 
         <div>
           <h2 className="text-xl font-semibold mb-3">Order Items</h2>
           <div className="bg-gray-50 p-4 rounded-lg space-y-4">
-            {order.order_items?.map((item) => (
-              <div key={item.book_id} className="flex justify-between items-center">
-                <div>
-                  <p className="font-semibold">{item.title}</p>
-                  <p>Quantity: {item.quantity}</p>
+            {Array.isArray(order.order_items) && order.order_items.length > 0 ? (
+              order.order_items.map((item) => (
+                <div key={item.book_id} className="flex justify-between items-center border-b pb-2">
+                  <div>
+                    <p className="font-semibold">{item.title}</p>
+                    <p className="text-sm text-gray-600">Quantity: {item.quantity}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-medium">₹{parseFloat(item.price).toFixed(2)} × {item.quantity}</p>
+                    <p className="font-semibold">₹{(parseFloat(item.price) * item.quantity).toFixed(2)}</p>
+                  </div>
                 </div>
-                <p>₹{(item.price * item.quantity).toFixed(2)}</p>
-              </div>
-            ))}
+              ))
+            ) : (
+              <p className="text-gray-500">No items found</p>
+            )}
           </div>
-          <div className="mt-4 flex justify-between items-center">
-            <span className="font-semibold">Total</span>
-            <span className="font-bold">₹{Number(order.total_amount).toFixed(2)}</span>
+          <div className="mt-4 flex justify-between items-center bg-gray-100 p-4 rounded-lg">
+            <span className="font-semibold text-lg">Total Amount</span>
+            <span className="font-bold text-lg text-green-600">₹{parseFloat(order.total_amount || '0').toFixed(2)}</span>
           </div>
         </div>
 

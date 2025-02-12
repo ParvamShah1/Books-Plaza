@@ -1,9 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config';
-import { createPayment, createOrder } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
-import axios from 'axios'; // Import axios
+import axios from 'axios';
+
+declare global {
+  interface Window {
+    Razorpay: any;
+  }
+}
 
 interface CartItem {
   book_id: number;
@@ -24,12 +29,10 @@ const indianStates = [
 ];
 
 interface FormData {
-  // Personal Details
   firstName: string;
   lastName: string;
   email: string;
   phone: string;
-  // Shipping Details
   address: string;
   apartment: string;
   city: string;
@@ -45,11 +48,13 @@ interface CheckoutFormProps {
 
 const CheckoutForm: React.FC<CheckoutFormProps> = ({ cart, onCheckoutComplete }) => {
   const navigate = useNavigate();
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isPaymentComplete, setIsPaymentComplete] = useState(false);
   const [formData, setFormData] = useState<FormData>({
     firstName: '',
     lastName: '',
     email: '',
-    phone: '',
+    phone: '+91',
     address: '',
     apartment: '',
     city: '',
@@ -71,7 +76,7 @@ const CheckoutForm: React.FC<CheckoutFormProps> = ({ cart, onCheckoutComplete })
     const items = JSON.parse(localStorage.getItem('cart') || '[]');
     const itemsWithIds = items.map((item: CartItem) => ({
       ...item,
-      book_id: item.book_id || null, // Ensure book_id is preserved
+      book_id: item.book_id || null,
       price: Number(item.price)
     }));
     setCartItems(itemsWithIds);
@@ -80,11 +85,30 @@ const CheckoutForm: React.FC<CheckoutFormProps> = ({ cart, onCheckoutComplete })
   }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    if (e.target.name === 'phone' && !e.target.value.startsWith('+91')) {
-      setFormData({ ...formData, [e.target.name]: '+91' + e.target.value });
+    if (e.target.name === 'phone') {
+      // Remove any non-digit characters except the +91 prefix
+      const value = e.target.value.replace(/[^\d+]/g, '');
+      
+      // If the value doesn't start with +91, add it
+      const phoneNumber = value.startsWith('+91') ? value : '+91' + value;
+      
+      // Limit to +91 plus 10 digits
+      const limitedNumber = phoneNumber.slice(0, 13); // +91 (3 chars) + 10 digits
+      
+      setFormData({ ...formData, phone: limitedNumber });
     } else {
       setFormData({ ...formData, [e.target.name]: e.target.value });
     }
+  };
+
+  const loadRazorpayScript = () => {
+    return new Promise((resolve) => {
+      const script = document.createElement('script');
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+      script.onload = () => resolve(true);
+      script.onerror = () => resolve(false);
+      document.body.appendChild(script);
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -93,136 +117,156 @@ const CheckoutForm: React.FC<CheckoutFormProps> = ({ cart, onCheckoutComplete })
     setError(null);
 
     try {
-      // 1. Create order
-      // ... existing code ...
+      // Validate required fields
+      if (!formData.email || !formData.firstName || !formData.lastName || !formData.phone ||
+          !formData.address || !formData.city || !formData.state || !formData.zipCode ||
+          !cartItems.length) {
+        throw new Error('Please fill in all required fields');
+      }
+
+      // First, save the order with 'pending' status
       const orderData = {
-        items: cart.map(item => ({
-          book_id: item.book_id,
-          quantity: item.quantity,
-          price: item.price
-        })),
-        shipping_address: {
-          firstName: formData.firstName,
-          lastName: formData.lastName,
+        payment_status: 'pending',
+        total_amount: parseFloat(total.toFixed(2)), // Ensure it's a valid float
+        shipping_address: JSON.stringify({
           address: formData.address,
-          apartment: formData.apartment,
+          apartment: formData.apartment || '',
           city: formData.city,
           state: formData.state,
-          zip: formData.zipCode,
+          zipCode: formData.zipCode,
           country: formData.country
-        },
-        customer_name: `${formData.firstName} ${formData.lastName}`,
-        customer_email: formData.email,
-        customer_phone: formData.phone,
-        total_amount: cart.reduce((total, item) => total + item.price * item.quantity, 0)
+        }),
+        customer_name: `${formData.firstName} ${formData.lastName}`.trim(),
+        customer_email: formData.email.trim().toLowerCase(),
+        customer_phone: formData.phone.startsWith('+91') ? formData.phone : `+91${formData.phone}`,
+        items: cartItems.map(item => ({
+          book_id: parseInt(String(item.book_id)),
+          quantity: parseInt(String(item.quantity)),
+          price: parseFloat(item.price.toFixed(2))
+        }))
       };
-      const response = await axios.post(`${API_BASE_URL}/orders`, orderData);
-      // ... existing code ...
 
-      console.log("orderData being sent:", orderData);
-      const createdOrder = response.data; // This now contains the redirectUrl
-
-      // Redirect to the payment URL received from the backend
-      if (createdOrder.redirectUrl) {
-        window.location.href = createdOrder.redirectUrl;
-        localStorage.removeItem('cart'); // Clear cart on successful redirect
-        onCheckoutComplete(); // Notify that checkout is complete
-      } else {
-        // Handle the case where the backend didn't return a redirect URL
-        throw new Error('Payment initiation failed: No redirect URL received from backend');
+      // Save order to database
+      const orderResponse = await axios.post(`${import.meta.env.VITE_API_URL}/orders`, orderData);
+      
+      if (!orderResponse.data.success) {
+        throw new Error('Failed to create order');
       }
-    } catch (error: any) {
+
+      // Load Razorpay script
+      const scriptLoaded = await loadRazorpayScript();
+      if (!scriptLoaded) {
+        throw new Error('Razorpay SDK failed to load');
+      }
+
+      // Create Razorpay order
+      const { data } = await axios.post(`${import.meta.env.VITE_API_URL}/create-razorpay-order`, {
+        amount: total,
+        currency: 'INR',
+        receipt: `order_${orderResponse.data.order.order_id}`,
+      });
+
+      if (!data.success) {
+        throw new Error('Failed to create Razorpay order');
+      }
+
+      setIsProcessing(true);
+
+      // Configure Razorpay options
+      const options = {
+        key: import.meta.env.VITE_RAZORPAY_KEY_ID,
+        amount: data.order.amount,
+        currency: data.order.currency,
+        name: 'Books Plaza',
+        description: 'Book Purchase',
+        order_id: data.order.id,
+        modal: {
+          ondismiss: () => {
+            setIsProcessing(false);
+          }
+        },
+        handler: async (response: any) => {
+          try {
+            // Store the database order ID in a variable to use in catch block
+            const dbOrderId = orderResponse.data.order.order_id;
+            
+            const verificationResponse = await axios.post(
+              `${import.meta.env.VITE_API_URL}/verify-razorpay-payment`,
+              {
+                orderCreationId: data.order.id,
+                razorpayPaymentId: response.razorpay_payment_id,
+                razorpayOrderId: response.razorpay_order_id,
+                razorpaySignature: response.razorpay_signature,
+                orderId: dbOrderId
+              }
+            );
+
+            if (verificationResponse.data.success) {
+              setIsPaymentComplete(true);
+              toast.success('Payment successful!');
+              localStorage.removeItem('cart');
+              onCheckoutComplete();
+              // Add a small delay before navigation to show the success state
+              setTimeout(() => {
+                navigate(`/payment-success?orderId=${dbOrderId}`);
+              }, 1500);
+            } else {
+              throw new Error('Payment verification failed');
+            }
+          } catch (error) {
+            console.error('Payment verification error:', error);
+            toast.error('Payment verification failed');
+            // Update order status to 'failed' in case of payment failure
+            try {
+              await axios.put(`${import.meta.env.VITE_API_URL}/orders/${dbOrderId}/status`, {
+                status: 'failed'
+              });
+            } catch (updateError) {
+              console.error('Error updating order status:', updateError);
+            }
+            setIsProcessing(false);
+            navigate('/payment-failed');
+          }
+        },
+        prefill: {
+          name: `${formData.firstName} ${formData.lastName}`,
+          email: formData.email,
+          contact: formData.phone,
+        },
+        theme: {
+          color: '#F97316',
+        },
+      };
+
+      const razorpay = new window.Razorpay(options);
+      razorpay.open();
+    } catch (error) {
       console.error('Checkout error:', error);
-      toast.error(error.message || 'An unexpected error occurred');
-      setError(error.message || 'An unexpected error occurred');
+      setError('Failed to process payment. Please try again.');
+      toast.error('Payment failed');
+      setIsProcessing(false);
     } finally {
       setLoading(false);
     }
-  
-
-// ... existing code ...
-      // const createdOrder = response.data;
-
-      // 2. Create payment
-      // const paymentData = {
-      //   orderId: createdOrder.order_id,
-      //   amount: total,
-      //   customerName: `${formData.firstName} ${formData.lastName}`,
-      //   customerEmail: formData.email,
-      //   customerPhone: formData.phone,
-      // };
-      // const paymentResponse = await createPayment(paymentData);
-
-      // if (paymentResponse.redirectUrl) {
-      //   window.location.href = paymentResponse.redirectUrl;
-      //   localStorage.removeItem('cart');
-      //   onCheckoutComplete();
-      // } else {
-      //   throw new Error('Payment initiation failed: No redirect URL received');
-      // }
-    // } catch (error: any) {
-    //   console.error('Checkout error:', error);
-    //   toast.error(error.message || 'An unexpected error occurred');
-    //   setError(error.message || 'An unexpected error occurred');
-    // } finally {
-    //   setLoading(false);
-    // }
-  
-// ... existing code ...
-      // console.log('Creating order with data:', orderData);
-      // const orderResponse = await createOrder(orderData);
-      // console.log('Order created:', orderResponse);
-
-      // // 2. Create payment
-      // const paymentData = {
-      //   orderId: orderResponse.order_id,
-      //   amount: orderResponse.total_amount,
-      //   customerName: orderResponse.customer_name,
-      //   customerEmail: orderResponse.customer_email,
-      //   customerPhone: orderResponse.customer_phone
-      // };
-
-      // console.log('Creating payment with data:', paymentData);
-      // const paymentResponse = await createPayment(paymentData);
-      // console.log('Payment created:', paymentResponse);
-
-      // // 3. Redirect to payment gateway
-      // if (paymentResponse.redirectUrl) {
-      //   window.location.href = paymentResponse.redirectUrl;
-      // } else {
-      //   throw new Error('No redirect URL received from payment gateway');
-      // }
-
-    // } catch (err: any) {
-    //   console.error('Checkout error:', err);
-    //   setError(err.message || 'An error occurred during checkout');
-    //   toast.error(err.message || 'Checkout failed');
-    // } finally {
-    //   setLoading(false);
-    // }
   };
 
   const renderCartItem = (item: CartItem) => (
-    <div key={`cart-item-${item.book_id}`} className="flex items-center space-x-4">
-      {item.coverImage && (
-        <img 
-          src={item.coverImage} 
-          alt={item.title} 
-          className="w-16 h-24 object-cover rounded"
-        />
-      )}
-      <div className="flex-1">
-        <h4 className="text-sm font-medium text-gray-800">{item.title}</h4>
-        <p className="text-sm text-gray-600">Qty: {item.quantity}</p>
-        <p className="text-sm font-medium text-gray-800">
-          ₹{(item.price * item.quantity).toFixed(2)}
-        </p>
+    <div key={item.book_id} className="flex items-center justify-between">
+      <div className="flex items-center space-x-4">
+        {item.coverImage && (
+          <img src={item.coverImage} alt={item.title} className="w-16 h-20 object-cover rounded" />
+        )}
+        <div>
+          <h4 className="text-gray-800 font-medium">{item.title}</h4>
+          <p className="text-gray-600 text-sm">Quantity: {item.quantity}</p>
+        </div>
       </div>
+      <span className="text-gray-800 font-medium">₹{(item.price * item.quantity).toFixed(2)}</span>
     </div>
   );
 
   const renderPriceRow = (label: string, amount: number, isTotal: boolean = false) => (
-    <div key={`price-${label.toLowerCase().replace(/\s+/g, '-')}`} 
+    <div key={`price-${label.toLowerCase().replace(/\\s+/g, '-')}`} 
          className={`flex justify-between ${isTotal ? 'text-base font-semibold mt-4 pt-4 border-t' : 'text-sm'}`}>
       <span className={isTotal ? '' : 'text-gray-600'}>{label}</span>
       <span className={isTotal ? '' : 'font-medium'}>₹{amount.toFixed(2)}</span>
@@ -230,7 +274,20 @@ const CheckoutForm: React.FC<CheckoutFormProps> = ({ cart, onCheckoutComplete })
   );
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 to-yellow-50 py-8 px-4">
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 to-yellow-50 py-8 px-4 relative">
+      {(isProcessing || isPaymentComplete) && (
+        <div className="fixed inset-0 bg-white/80 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="text-center p-8 bg-white rounded-xl shadow-2xl max-w-sm mx-4">
+            <div className="w-16 h-16 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto mb-6"></div>
+            <p className="text-xl font-medium text-gray-700 mb-2">
+              {isPaymentComplete ? 'Payment successful!' : 'Processing payment...'}
+            </p>
+            <p className="text-gray-500">
+              {isPaymentComplete ? 'Redirecting you to the confirmation page...' : 'Please wait while we process your payment'}
+            </p>
+          </div>
+        </div>
+      )}
       <div className="max-w-6xl mx-auto">
         <h2 className="text-3xl font-bold mb-6 text-orange-600">Checkout</h2>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -241,164 +298,169 @@ const CheckoutForm: React.FC<CheckoutFormProps> = ({ cart, onCheckoutComplete })
                 {cartItems.map(renderCartItem)}
               </div>
               <div className="border-t pt-4 space-y-2">
-                  {[
-                    { label: 'Subtotal', value: `₹${inflatedSubtotal}` },
-                    { label: 'Delivery', value: 'Free', className: 'text-blue-600' },
-                    { label: 'Discount', value: `-₹${discount}`, className: 'text-green-600' },
-                    { type: 'divider' },
-                    { label: 'Total', value: `₹${subtotal}`, bold: true }
-                  ].map((item, index) => (
-                    item.type === 'divider' ? (
-                      <div key={`summary-divider-${index}`} className="h-px bg-gray-100 my-2"></div>
-                    ) : (
-                      <div key={`price-${index}`} className={`flex justify-between ${item.bold ? 'text-base font-semibold' : 'text-sm'}`}>
-                        <span className={item.bold ? '' : 'text-gray-600'}>{item.label}</span>
-                        <span className={item.className || (item.bold ? '' : '')}>{item.value}</span>
-                      </div>
-                    )
-                  ))}
+                {renderPriceRow('Subtotal', inflatedSubtotal)}
+                {renderPriceRow('Discount', discount)}
+                {renderPriceRow('Total', total, true)}
               </div>
             </div>
           </div>
 
           <div className="lg:col-span-2">
-            <form onSubmit={handleSubmit} className="space-y-6">
-              <div className="bg-white p-6 rounded-lg shadow-lg">
-                <h3 className="text-xl font-semibold mb-4 text-gray-700">Personal Details</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {[
-                    { name: 'firstName', label: 'First Name', type: 'text' },
-                    { name: 'lastName', label: 'Last Name', type: 'text' },
-                    { name: 'email', label: 'Email', type: 'email' },
-                    { name: 'phone', label: 'Phone Number', type: 'tel', prefix: '+91' }
-                  ].map(field => (
-                    <div key={`field-${field.name}`}>
-                      <label htmlFor={field.name} className="block text-sm font-medium text-gray-700">
-                        {field.label}
-                      </label>
-                      {/* Update the phone input field styling */}
-                      {'prefix' in field ? (
-                        <div className="relative mt-1">
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">
-                            {field.prefix}
-                          </span>
-                          <input
-                            type={field.type}
-                            id={field.name}
-                            name={field.name}
-                            value={formData[field.name as keyof FormData].replace('+91', '')}
-                            onChange={handleChange}
-                            className="block w-full pl-14 rounded-md border-gray-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
-                            pattern="[0-9]{10}"
-                            maxLength={10}
-                            placeholder="Enter 10-digit number"
-                            required
-                          />
-                        </div>
-                      ) : (
-                        <input
-                          type={field.type}
-                          id={field.name}
-                          name={field.name}
-                          value={formData[field.name as keyof FormData]}
-                          onChange={handleChange}
-                          required
-                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
-                        />
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="bg-white p-6 rounded-lg shadow-lg">
-                <h3 className="text-xl font-semibold mb-4 text-gray-700">Shipping Details</h3>
-                <div className="space-y-4">
-                  {[
-                    { name: 'address', label: 'Street Address', required: true },
-                    { name: 'apartment', label: 'Apartment, suite, etc. (optional)', required: false }
-                  ].map(field => (
-                    <div key={`field-${field.name}`}>
-                      <label htmlFor={field.name} className="block text-sm font-medium text-gray-700">
-                        {field.label}
-                      </label>
-                      <input
-                        type="text"
-                        id={field.name}
-                        name={field.name}
-                        value={formData[field.name as keyof FormData]}
-                        onChange={handleChange}
-                        required={field.required}
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                      />
-                    </div>
-                  ))}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {[
-                      { name: 'city', label: 'City' },
-                      { name: 'state', label: 'State' },
-                      { name: 'zipCode', label: 'ZIP Code' },
-                      { name: 'country', label: 'Country' }
-                    ].map(field => (
-                      <div key={`field-${field.name}`}>
-                        <label htmlFor={field.name} className="block text-sm font-medium text-gray-700">
-                          {field.label}
-                        </label>
-                        {field.name === 'state' ? (
-                          <select
-                            id={field.name}
-                            name={field.name}
-                            value={formData[field.name as keyof FormData]}
-                            onChange={handleChange}
-                            required
-                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
-                          >
-                            {indianStates.map((state) => (
-                              <option key={state} value={state}>{state}</option>
-                            ))}
-                          </select>
-                        ) : field.name === 'country' ? (
-                          <input
-                            type="text"
-                            id={field.name}
-                            name={field.name}
-                            value={formData[field.name as keyof FormData]}
-                            readOnly
-                            className="mt-1 block w-full rounded-md border-gray-300 bg-gray-100 shadow-sm"
-                            required
-                          />
-                        ) : (
-                          <input
-                            type="text"
-                            id={field.name}
-                            name={field.name}
-                            value={formData[field.name as keyof FormData]}
-                            onChange={handleChange}
-                            required
-                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
-                          />
-                        )}
-                      </div>
-                    ))}
+            <div className="bg-white rounded-lg shadow-lg p-6">
+              <h3 className="text-xl font-semibold mb-6 text-gray-700">Shipping Information</h3>
+              <form onSubmit={handleSubmit} className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label htmlFor="firstName" className="block text-gray-700 font-medium mb-2">First Name</label>
+                    <input
+                      type="text"
+                      id="firstName"
+                      name="firstName"
+                      value={formData.firstName}
+                      onChange={handleChange}
+                      required
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="lastName" className="block text-gray-700 font-medium mb-2">Last Name</label>
+                    <input
+                      type="text"
+                      id="lastName"
+                      name="lastName"
+                      value={formData.lastName}
+                      onChange={handleChange}
+                      required
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500"
+                    />
                   </div>
                 </div>
-              </div>
 
-              <button
-                type="submit"
-                className="w-full bg-orange-500 text-white py-3 px-6 rounded-lg hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 transition-all duration-200 hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 font-semibold text-lg shadow-md"
-                disabled={loading}
-              >
-                {loading ? 'Processing...' : `Place Order (₹${total.toFixed(2)})`}
-              </button>
-              {error && (
-                <div className="text-red-500 text-sm mt-2">{error}</div>
-              )}
-            </form>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label htmlFor="email" className="block text-gray-700 font-medium mb-2">Email</label>
+                    <input
+                      type="email"
+                      id="email"
+                      name="email"
+                      value={formData.email}
+                      onChange={handleChange}
+                      required
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="phone" className="block text-gray-700 font-medium mb-2">Phone</label>
+                    <input
+                      type="tel"
+                      id="phone"
+                      name="phone"
+                      value={formData.phone}
+                      onChange={handleChange}
+                      required
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label htmlFor="address" className="block text-gray-700 font-medium mb-2">Address</label>
+                  <input
+                    type="text"
+                    id="address"
+                    name="address"
+                    value={formData.address}
+                    onChange={handleChange}
+                    required
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500"
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="apartment" className="block text-gray-700 font-medium mb-2">Apartment, suite, etc.</label>
+                  <input
+                    type="text"
+                    id="apartment"
+                    name="apartment"
+                    value={formData.apartment}
+                    onChange={handleChange}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div>
+                    <label htmlFor="city" className="block text-gray-700 font-medium mb-2">City</label>
+                    <input
+                      type="text"
+                      id="city"
+                      name="city"
+                      value={formData.city}
+                      onChange={handleChange}
+                      required
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="state" className="block text-gray-700 font-medium mb-2">State</label>
+                    <select
+                      id="state"
+                      name="state"
+                      value={formData.state}
+                      onChange={handleChange}
+                      required
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500"
+                    >
+                      {indianStates.map(state => (
+                        <option key={state} value={state}>{state}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="zipCode" className="block text-gray-700 font-medium mb-2">ZIP Code</label>
+                    <input
+                      type="text"
+                      id="zipCode"
+                      name="zipCode"
+                      value={formData.zipCode}
+                      onChange={handleChange}
+                      required
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label htmlFor="country" className="block text-gray-700 font-medium mb-2">Country</label>
+                  <input
+                    type="text"
+                    id="country"
+                    name="country"
+                    value={formData.country}
+                    disabled
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50"
+                  />
+                </div>
+
+                {error && (
+                  <div className="text-red-500 text-sm mt-2">{error}</div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className={`w-full bg-orange-500 text-white py-3 px-6 rounded-lg font-semibold 
+                    ${loading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-orange-600'}`}
+                >
+                  {loading ? 'Processing...' : `Pay ₹${total.toFixed(2)}`}
+                </button>
+              </form>
+    </div>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    // </div>
   );
 };
 

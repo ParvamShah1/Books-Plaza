@@ -14,18 +14,23 @@ const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
+const Razorpay = require('razorpay');
 // const { upload, checkAdminCode } = require('./middleware');
+
+// Initialize Razorpay
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET
+});
 
 // Load environment variables
 require('dotenv').config();
 
-// Validate PhonePe configuration
-if (!process.env.PHONEPE_MERCHANT_ID || !process.env.PHONEPE_SALT_KEY || !process.env.PHONEPE_SALT_INDEX) {
-  console.error('PhonePe credentials are missing');
+// Validate Razorpay configuration
+if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+  console.error('Razorpay credentials are missing');
   process.exit(1);
 }
-
-
 
 const API_URL = process.env.API_URL || 'http://localhost:3001';
 
@@ -346,6 +351,7 @@ app.patch('/api/admin/books/:id/status', checkAdminCode, async (req, res) => {
 // Get All Orders (Admin) - Requires Authentication
 app.get('/api/admin/orders', checkAdminCode, async (req, res) => {
   try {
+    console.log('Received request params:', req.query);
     // Extract query parameters for pagination, filtering, and sorting
     const page = parseInt(req.query.page) || 1; // Default to page 1
     const limit = parseInt(req.query.limit) || 10; // Default limit to 10 orders per page
@@ -354,8 +360,8 @@ app.get('/api/admin/orders', checkAdminCode, async (req, res) => {
 
     // Build the WHERE clause for filtering
     let whereClause = '';
-    let queryParams = [limit, offset];
-    let paramIndex = 3; // Start with $3 because $1 and $2 are for limit and offset
+    let queryParams = [];
+    let paramIndex = 1; // Start with $3 because $1 and $2 are for limit and offset
 
     if (status) {
       whereClause += ` WHERE payment_status = $${paramIndex}`;
@@ -379,8 +385,7 @@ app.get('/api/admin/orders', checkAdminCode, async (req, res) => {
     }
 
     // Query to get the total count of orders (for pagination)
-    const countResult = await db.query(`SELECT COUNT(*) FROM orders ${whereClause.replace(/(\$\d+)/g, (match, p1) => `$${parseInt(p1.slice(1)) - 2}`)}`, queryParams.slice(2)); // Adjust param indexes for count query
-    const totalOrders = parseInt(countResult.rows[0].count);
+    const countResult = await db.query(`SELECT COUNT(*) FROM orders ${whereClause}`, queryParams);    const totalOrders = parseInt(countResult.rows[0].count);
 
     // Query to get the paginated orders
     let orderQuery = `
@@ -419,26 +424,31 @@ app.get('/api/admin/orders', checkAdminCode, async (req, res) => {
           o.customer_phone,
           o.payment_id,
           o.transaction_id
-        ${orderByClause}
       )
       SELECT *
       FROM OrdersWithItems
+      ${orderByClause}
       LIMIT $1 OFFSET $2`;
 
-    const ordersResult = await db.query(orderQuery, queryParams);
+    console.log('Executing query with params:', [limit, offset]);
+    const ordersResult = await db.query(orderQuery, [limit, offset]);
     
-    // Transform the response to match the frontend's expected format
-    const orders = ordersResult.rows.map(order => ({
-      ...order,
-      items: order.items[0] === null ? [] : order.items // Handle case when there are no items
-    }));
-
-    res.json({
-      orders,
+    // No need to transform items as we're handling null cases in the SQL query
+    const response = {
+      orders: ordersResult.rows,
       totalOrders,
       currentPage: page,
-      totalPages: Math.ceil(totalOrders / limit),
+      totalPages: Math.ceil(totalOrders / limit)
+    };
+    
+    console.log('Sending response:', {
+      currentPage: response.currentPage,
+      totalPages: response.totalPages,
+      totalOrders: response.totalOrders,
+      orderCount: response.orders.length
     });
+    
+    res.json(response);
   } catch (err) {
     console.error('Error fetching orders (admin):', err);
     res.status(500).json({ error: 'Error fetching orders' });
@@ -551,67 +561,200 @@ app.get('/api/books/:id', async (req, res) => {
   }
 });
 
-// Create order endpoint
-// ... existing code ...
-
+// Create order endpoint with Razorpay integration
 app.post('/api/orders', [
-  // Validation middleware (keep this)
   body('customer_email').isEmail().normalizeEmail().withMessage('Invalid email'),
   body('customer_name').notEmpty().trim().escape().withMessage('Customer name is required'),
   body('customer_phone').notEmpty().trim().withMessage('Customer phone is required'),
   body('items').isArray({ min: 1 }).withMessage('At least one item is required'),
-  body('shipping_address').notEmpty().withMessage('Shipping address is required'),
+  body('shipping_address').custom((value) => {
+    try {
+      const address = typeof value === 'string' ? JSON.parse(value) : value;
+      if (!address.address || !address.city || !address.state || !address.zipCode) {
+        throw new Error('Invalid shipping address');
+      }
+      return true;
+    } catch (err) {
+      throw new Error('Invalid shipping address format');
+    }
+  }).withMessage('Valid shipping address is required'),
   body('total_amount').isFloat({ min: 0.01 }).withMessage('Total amount must be greater than 0')
 ], async (req, res) => {
+  console.log('Received order data:', JSON.stringify(req.body, null, 2));
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+    console.log('Validation errors:', errors.array());
+    return res.status(400).json({ errors: errors.array() });
   }
 
-  const { items, shipping_address, customer_name, customer_email, customer_phone, total_amount } = req.body;
+  const { 
+    items, 
+    shipping_address, 
+    customer_name, 
+    customer_email, 
+    customer_phone, 
+    total_amount,
+    payment_status = 'pending' // Default to pending
+  } = req.body;
 
   const client = await db.connect();
 
   try {
-      await client.query('BEGIN');
+    await client.query('BEGIN');
 
-      // Insert order details
-      const orderResult = await client.query(
-          `INSERT INTO orders (customer_email, customer_name, customer_phone, shipping_address, total_amount, payment_status)
-     VALUES ($1, $2, $3, $4, $5,'pending') RETURNING order_id`,
-          [customer_email, customer_name, customer_phone, JSON.stringify(shipping_address), total_amount]
+    // Insert order details
+    const orderResult = await client.query(
+      `INSERT INTO orders (
+        customer_email, 
+        customer_name, 
+        customer_phone, 
+        shipping_address, 
+        total_amount, 
+        payment_status,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW()) 
+      RETURNING *`,
+      [
+        customer_email,
+        customer_name,
+        customer_phone,
+        JSON.stringify(shipping_address),
+        total_amount,
+        payment_status
+      ]
+    );
+
+    const order = orderResult.rows[0];
+
+    // Insert order items
+    for (const item of items) {
+      await client.query(
+        `INSERT INTO order_items (order_id, book_id, quantity, price)
+        VALUES ($1, $2, $3, $4)`,
+        [order.order_id, item.book_id, item.quantity, item.price]
       );
+    }
 
-      const orderId = orderResult.rows[0].order_id;
+    await client.query('COMMIT');
 
-      // Insert order items
-      for (const item of items) {
-          await client.query(
-              `INSERT INTO order_items (order_id, book_id, quantity, price)
-       VALUES ($1, $2, $3, $4)`,
-              [orderId, item.book_id, item.quantity, item.price]
-          );
-      }
-
-      await client.query('COMMIT');
-
-      // --- Return order details AND redirect URL ---
-      res.status(201).json({
-          order_id: orderId,
-          message: 'Order created successfully',
-          redirectUrl: `/payment/${orderId}`, //  Redirect to /payment
-      });
+    res.status(201).json({
+      success: true,
+      order: order,
+      message: 'Order created successfully'
+    });
 
   } catch (error) {
-      await client.query('ROLLBACK');
-      console.error('Error creating order:', error);
-      res.status(500).json({ error: 'Failed to create order' });
+    await client.query('ROLLBACK');
+    console.error('Error creating order:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to create order: ' + error.message 
+    });
   } finally {
-      client.release();
+    client.release();
   }
 });
 
-// ... existing code ...
+// Razorpay Create Order endpoint
+app.post('/api/create-razorpay-order', async (req, res) => {
+  try {
+    const { amount, currency = 'INR', receipt } = req.body;
+
+    const options = {
+      amount: amount * 100, // Razorpay expects amount in paise
+      currency,
+      receipt,
+      payment_capture: 1
+    };
+
+    const order = await razorpay.orders.create(options);
+    res.json({
+      success: true,
+      order
+    });
+  } catch (error) {
+    console.error('Error creating Razorpay order:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error creating order'
+    });
+  }
+});
+
+// Razorpay Payment Verification endpoint
+app.post('/api/verify-razorpay-payment', async (req, res) => {
+  const client = await db.connect();
+  try {
+    const {
+      orderCreationId,
+      razorpayPaymentId,
+      razorpayOrderId,
+      razorpaySignature,
+      orderId
+    } = req.body;
+
+    console.log('Verifying payment for order:', { orderId, razorpayOrderId, razorpayPaymentId });
+
+    const shasum = crypto.createHmac('sha256', process.env.RAZORPAY_KEY_SECRET);
+    shasum.update(`${orderCreationId}|${razorpayPaymentId}`);
+    const digest = shasum.digest('hex');
+
+    if (digest !== razorpaySignature) {
+      console.log('Invalid signature:', { digest, razorpaySignature });
+      return res.status(400).json({
+        success: false,
+        error: 'Transaction not legit!'
+      });
+    }
+
+    await client.query('BEGIN');
+
+    // First check if order exists
+    const checkOrderQuery = 'SELECT * FROM orders WHERE order_id = $1';
+    const checkResult = await client.query(checkOrderQuery, [orderId]);
+
+    if (checkResult.rows.length === 0) {
+      throw new Error(`Order ${orderId} not found in database`);
+    }
+
+    // Update order status to 'paid'
+    const updateOrderQuery = `
+      UPDATE orders 
+      SET payment_status = 'paid', 
+          payment_id = $1, 
+          transaction_id = $2,
+          updated_at = NOW()
+      WHERE order_id = $3
+      RETURNING *`;
+
+    const updateResult = await client.query(updateOrderQuery, [
+      razorpayPaymentId,
+      razorpayOrderId,
+      orderId
+    ]);
+
+    console.log('Order updated:', updateResult.rows[0]);
+
+    await client.query('COMMIT');
+
+    res.json({
+      success: true,
+      message: 'Payment has been verified and order updated',
+      order: updateResult.rows[0]
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error verifying Razorpay payment:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Error verifying payment'
+    });
+  } finally {
+    client.release();
+  }
+});
 
 // Debug middleware for sessions
 app.use((req, res, next) => {
@@ -621,457 +764,11 @@ app.use((req, res, next) => {
   });
   next();
 });
-
-
-
-
-const PAY_PAGE_URL = `${process.env.PHONEPE_API_URL}/pg/v1/pay`;
-const VERIFY_STATUS_URL = `${process.env.PHONEPE_API_URL}/pg/v1/status`;
-const MERCHANT_ID = process.env.PHONEPE_MERCHANT_ID;
-const SALT_KEY = process.env.PHONEPE_SALT_KEY;
-const SALT_INDEX = process.env.PHONEPE_SALT_INDEX;
-
-// Enhanced X-VERIFY calculation
-
-const calculateXVerify = (base64Payload, path, saltKey, saltIndex) => {
-    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-    const stringToHash = base64Payload + normalizedPath + saltKey;
-
-    console.log('Hash Input:', { base64Payload, normalizedPath, saltIndex }); // Removed saltKey for security
-    console.log(crypto.createHash('sha256').update(stringToHash, 'utf8').digest('hex') + `###${saltIndex}`);
-    return crypto.createHash('sha256').update(stringToHash, 'utf8').digest('hex') + `###${saltIndex}`;
-};
-
-
-// Create Payment Endpoint
-app.post('/api/create-payment', async (req, res) => {
-  let merchantTransactionId; // Declare outside try block for error handling
   
-  try {
-      console.log('Environment Config:', {
-          MERCHANT_ID: MERCHANT_ID,
-          SALT_INDEX,
-          PAY_PAGE_URL,
-          CALLBACK_URL: `https://books-plaza-production.up.railway.app/api/payment/phonepe-callback`
-      });
 
-      // Validate required fields
-      const requiredFields = ['orderId', 'amount', 'customerName', 'customerEmail', 'customerPhone'];
-      const missingFields = requiredFields.filter(field => !req.body[field]);
-      if (missingFields.length) {
-          return res.status(400).json({ 
-              error: 'Missing required fields',
-              missing: missingFields 
-          });
-      }
 
-      // Sanitize inputs
-      const { orderId, amount, customerPhone } = req.body;
-      const sanitizedOrderId = String(orderId).replace(/\D/g, '').padStart(4, '0');
-      const sanitizedPhone = String(customerPhone).replace(/\D/g, '');
-
-      // Validations
-      if (isNaN(Number(amount)) || Number(amount) <= 0) {
-          return res.status(400).json({ error: 'Invalid amount value' });
-      }
-      if (sanitizedPhone.length < 10) {
-          return res.status(400).json({ error: 'Invalid phone number' });
-      }
-
-      // Generate transaction ID
-      merchantTransactionId = `MT${Date.now()}_${sanitizedOrderId.slice(-10)}`;
-
-      // Construct payload
-      const payload = {
-          merchantId: MERCHANT_ID,
-          merchantTransactionId,
-          merchantUserId: `CUST_${sanitizedPhone.slice(-6)}`,
-          amount: Math.round(Number(amount) * 100),
-          redirectUrl: `https://www.booksplaza.in/payment-success`,
-          redirectMode: "REDIRECT",
-          callbackUrl: `https://books-plaza-production.up.railway.app/api/payment/phonepe-callback`,
-          mobileNumber: sanitizedPhone.slice(-10),
-          paymentInstrument: { type: 'PAY_PAGE' }
-      };
-
-      // Generate X-VERIFY
-      const payloadString = JSON.stringify(payload);
-      const base64Payload = Buffer.from(payloadString).toString('base64');
-      const xVerify = calculateXVerify(base64Payload, '/pg/v1/pay', SALT_KEY, SALT_INDEX);
-
-      console.log('Payment Request:', {
-          headers: { 'X-VERIFY': xVerify },
-          payload: base64Payload
-      });
-
-      // PhonePe API Call
-      const response = await axios.post(PAY_PAGE_URL, 
-          { request: base64Payload },
-          { 
-              headers: { 
-                  'X-VERIFY': xVerify, 
-                  'Content-Type': 'application/json',
-                  'X-MERCHANT-ID': MERCHANT_ID 
-              },
-              timeout: 10000 
-          }
-      );
-      console.log(response.data)
-      // Handle success response
-      if (response.data?.success && response.data?.data?.instrumentResponse?.redirectInfo?.url) {
-          await db.query(
-              `UPDATE orders 
-               SET transaction_id = $1, 
-                   payment_status = 'pending', 
-                   created_at = NOW()
-               WHERE order_id = $2`,
-              [merchantTransactionId, sanitizedOrderId]
-          );
-
-          return res.json({
-              success: true,
-              redirectUrl: response.data.data.instrumentResponse.redirectInfo.url,
-              transactionId: merchantTransactionId,
-              amount: payload.amount / 100
-          });
-      }
-
-      // Handle PhonePe errors
-      const errorMessage = response.data?.message || 'Payment gateway error';
-      console.error('PhonePe API Error:', {
-          status: response.status,
-          data: response.data
-      });
-      throw new Error(errorMessage);
-
-  } catch (error) {
-      console.error(error);
-      console.error('Payment Processing Error:', {
-          message: error.message,
-          stack: error.stack,
-          transactionId: merchantTransactionId || 'N/A',
-          responseData: error.response?.data
-      });
-
-      return res.status(500).json({ 
-          success: false,
-          error: 'Payment processing failed',
-          details: error.response?.data || error.message,
-          transactionId: merchantTransactionId || 'N/A'
-      });
-  }
-});
-// Verify Status Endpoint
-app.post('/api/payment/verify-status', async (req, res) => {
-    try {
-        const { merchantTransactionId } = req.body;
-        if (!merchantTransactionId) {
-            return res.status(400).json({ error: 'Transaction ID required' });
-        }
-
-        const path = `/pg/v1/status/${MERCHANT_ID}/${merchantTransactionId}`;
-        const xVerify = calculateXVerify('', path, SALT_KEY, SALT_INDEX);
-
-        console.log('Status Check:', {
-            headers: { 'X-VERIFY': xVerify },
-            path
-        });
-        
-        const response = await axios.get(
-            `${VERIFY_STATUS_URL}/${MERCHANT_ID}/${merchantTransactionId}`,
-            { 
-                headers: { 
-                    'X-VERIFY': xVerify, 
-                    'Content-Type': 'application/json',
-                    'X-MERCHANT-ID': MERCHANT_ID 
-                },
-                timeout: 10000 
-            }
-        );
-
-        const status = response.data?.data?.state || 'PENDING';
-        await db.query(
-            'UPDATE orders SET payment_status = $1 WHERE transaction_id = $2',
-            [status.toLowerCase(), merchantTransactionId]
-        );
-
-        res.json({ 
-            status,
-            amount: response.data?.data?.amount / 100 || 0,
-            transactionId: merchantTransactionId
-        });
-
-    } catch (error) {
-        console.error('Status Check Error:', {
-            message: error.message,
-            stack: error.stack
-        });
-        res.status(500).json({
-            success: false,
-            error: 'Status check failed',
-            details: error.response?.data || error.message
-        });
-    }
-});
-app.post('/api/payment/phonepe-callback', async (req, res) => {
-  try {
-    const saltKey = process.env.PHONEPE_SALT_KEY;
-    const saltIndex = process.env.PHONEPE_SALT_INDEX || '1';
-
-    // 1. --- Verify the X-VERIFY Header (Callback Version) ---
-
-    // Get the X-VERIFY header from the incoming request.
-    const receivedXVerify = req.headers['x-verify'];
-
-    // Check if the X-VERIFY header is present.
-    if (!receivedXVerify) {
-      console.error('X-VERIFY header missing from callback.');
-      return res.status(400).json({ success: false, error: 'X-VERIFY header missing' });
-    }
-
-    // Extract the SHA256 hash part from the received X-VERIFY (before ###).
-    const receivedHash = receivedXVerify.split('###')[0];
-
-    // Get the base64 encoded response body.  This is the ENTIRE body.
-    const encodedPayload = req.body.response;
-
-    if (!encodedPayload) {
-        console.error('Request body or response field is missing.');
-        return res.status(400).json({ success: false, error: 'Request body missing or invalid' });
-    }
-
-    // Construct the string to hash for verification.
-    const stringToHash = encodedPayload + saltKey;
-
-    // Calculate the SHA256 hash.
-    const calculatedHash = crypto.createHash('sha256').update(stringToHash).digest('hex');
-
-    // Check if the calculated hash matches the received hash.
-    if (calculatedHash !== receivedHash) {
-      console.error('X-VERIFY mismatch.  Rejecting callback.');
-      console.error('Calculated Hash:', calculatedHash);
-      console.error('Received Hash  :', receivedHash);
-      return res.status(400).json({ success: false, error: 'X-VERIFY mismatch' });
-    }
-
-    // 2. --- Decode the PhonePe Response ---
-
-    // Decode the base64 encoded response body.
-    const decodedPayload = Buffer.from(encodedPayload, 'base64').toString('utf-8');
-    const phonePeResponse = JSON.parse(decodedPayload);
-
-    console.log('Decoded PhonePe Callback Payload:', phonePeResponse);
-
-    // 3. --- Process the Payment Event ---
-    if (phonePeResponse.success === true && phonePeResponse.code === 'PAYMENT_SUCCESS') {
-
-        // Extract data from the DECODED response.
-        const { merchantId, merchantTransactionId, transactionId, amount } = phonePeResponse.data;
-        console.log("Extracted Data", merchantId, merchantTransactionId, transactionId, amount)
-
-      // Find the order in YOUR database using merchantTransactionId.
-      const orderResult = await db.query('SELECT * FROM orders WHERE transaction_id = $1', [merchantTransactionId]);
-
-      if (orderResult.rows.length > 0) {
-        // Update the order status in YOUR database.
-        await db.query(
-          'UPDATE orders SET payment_status = $1, payment_id = $2 WHERE transaction_id = $3',
-          ['Paid', transactionId, merchantTransactionId] // Use 'Paid', transactionId, and merchantTransactionId
-        );
-        console.log(`Order ${merchantTransactionId} marked as paid.`);
-      }
-      else{
-        console.log("no order found");
-        return res.status(404).json({message: "Order not found"})
-      }
-    } else {
-      // Handle payment failure
-      console.error('PhonePe Payment Failed:', phonePeResponse);
-      const merchantTransactionId = phonePeResponse.data.merchantTransactionId
-
-      // Find and update the order in YOUR database
-      const orderResult = await db.query('SELECT * FROM orders WHERE transaction_id = $1', [merchantTransactionId]);
-
-      if (orderResult.rows.length > 0) {
-          await db.query(
-            'UPDATE orders SET payment_status = $1 WHERE transaction_id = $2',
-            ['Failed', merchantTransactionId]
-          );
-          console.log(`Order ${merchantTransactionId} marked as failed.`);
-      }
-      else{
-        console.log("no order found");
-        return res.status(404).json({message: "Order not found"})
-      }
-    }
-
-    // 4. --- Respond to PhonePe (ALWAYS 200 OK) ---
-    res.status(200).json({ success: true }); // ACKNOWLEDGE receipt
-
-  } catch (error) {
-    console.error('Error in PhonePe callback handler:', error);
-    // ALWAYS return 200 OK to PhonePe, even on errors.
-    res.status(200).json({ success: false });  // Send success: false for your own tracking
-  }
-});
-
-// Get order details endpoint
-app.get('/api/orders/:orderId', async (req, res) => {
-    try {
-      const orderIdString = req.params.orderId;
-
-      // --- Backend Validation ---
-      if (!orderIdString || isNaN(Number(orderIdString))) {
-          return res.status(400).json({ error: 'Invalid order ID' });
-      }
-      const orderId = parseInt(orderIdString, 10); // Specify radix 10
-      console.log('Fetching details for order:', orderId);
-
-        const orderQuery = `
-            SELECT o.*, 
-                json_agg(
-                    json_build_object(
-                        'book_id', oi.book_id,
-                        'quantity', oi.quantity,
-                        'price', oi.price,
-                        'title', b.title
-                    )
-                ) as order_items
-            FROM orders o
-            LEFT JOIN order_items oi ON o.order_id = oi.order_id
-            LEFT JOIN books b ON oi.book_id = b.book_id
-            WHERE o.order_id = $1
-            GROUP BY o.order_id`;
-
-        const result = await db.query(orderQuery, [orderId]);
-
-        if (result.rows.length === 0) {
-            console.log('No order found with ID:', orderId);
-            return res.status(404).json({ error: 'Order not found' });
-        }
-
-        console.log('Found order:', result.rows[0]);
-        res.json(result.rows[0]);
-
-    } catch (error) {
-        console.error('Error fetching order details:', error);
-        res.status(500).json({ error: 'Failed to fetch order details' });
-    }
-});
-
-// Payment success handler (handles both GET and POST)
-app.all('/api/payment-success', async (req, res) => {
-  try {
-    console.log('Payment success received:', {
-      method: req.method,
-      body: req.body,
-      query: req.query,
-    });
-
-    const merchantTransactionId = req.body.merchantTransactionId || req.query.merchantTransactionId;
-    console.log('Looking for transaction:', merchantTransactionId);
-
-    if (!merchantTransactionId) {
-      console.error('No transaction ID found in request');
-      return res.status(400).json({ error: 'No transaction ID found' });
-    }
-
-    // Find order in database by transaction ID
-    const existingOrderResult = await db.query(
-      'SELECT * FROM orders WHERE transaction_id = $1',
-      [merchantTransactionId]
-    );
-
-    if (existingOrderResult.rows.length > 0) {
-      const order = existingOrderResult.rows[0];
-
-      // Fetch complete order details (including order items)
-      const completeOrderQuery = `
-        SELECT o.*,
-          json_agg(
-            json_build_object(
-              'book_id', oi.book_id,
-              'quantity', oi.quantity,
-              'price', oi.price,
-              'title', b.title
-            )
-          ) as order_items
-        FROM orders o
-        LEFT JOIN order_items oi ON o.order_id = oi.order_id
-        LEFT JOIN books b ON oi.book_id = b.book_id
-        WHERE o.order_id = $1
-        GROUP BY o.order_id`;
-
-      const completeOrderResult = await db.query(completeOrderQuery, [order.order_id]);
-      const completeOrder = completeOrderResult.rows[0];
-
-      // Corrected conditional statement
-      if (req.method === 'POST') { // Redirect on POST (from PhonePe)
-        return res.redirect(
-          `${process.env.FRONTEND_URL}/payment-success?orderId=${order.order_id}`
-        );
-      } else { // Handle GET requests (e.g., manual visits)
-        return res.json({ order: completeOrder });
-      }
-    } else {
-        return res.redirect(
-          `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?error=Order not found`
-        );
-      }
-    }
-   catch (error) {
-    console.error('Error processing payment success:', error);
-    if (req.method === 'GET') {
-      return res.status(500).json({ error: 'Error processing payment success' });
-    } else {
-      return res.redirect(
-        `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?error=Error processing payment success`
-      );
-    }
-  }
-});
-
-// Payment failure handler (handles both GET and POST)
-app.all('/api/payment-failed', async (req, res) => {
-  console.log('Payment failed:', {
-    method: req.method,
-    body: req.body,
-    query: req.query
-  });
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-  res.redirect(`${frontendUrl}/payment-failed`);
-});
-
-// Check PhonePe API Status
-app.get("/api/status", async (req, res) => {
-  try {
-    const merchantID = process.env.PHONEPE_MERCHANT_ID;
-    const statusUrl = `https://uptime.phonepe.com/v1/pg/merchants/${merchantID}/health`;
-
-    //  Calculate X-VERIFY header (even for the status check)
-    const path = `/v1/pg/merchants/${merchantID}/health`; // Path for X-VERIFY calculation
-    const xVerify = calculateXVerify('', path, process.env.PHONEPE_SALT_KEY, process.env.PHONEPE_SALT_INDEX); // Empty payload for GET
-    console.log(xVerify);
-    const response = await axios.get(statusUrl, {
-      headers: {
-        'X-VERIFY': xVerify, // Include X-VERIFY
-        // 'X-MERCHANT-ID': merchantID, // It's good practice to include the merchant ID
-        'Content-Type': 'application/json' // Always specify content type
-      },
-      timeout: 10000 // Set a reasonable timeout (10 seconds)
-    });
-
-    res.json(response.data); // Send the full response data from PhonePe
-  } catch (error) {
-    console.error('PhonePe Status Check Error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'PhonePe status check failed',
-      details: error.response?.data || error.message // Safe access to error details
-    });
-  }
-});
-
+ 
+    
 // Function to calculate total amount
 function calculateTotalAmount(items) {
   if (!Array.isArray(items)) {
@@ -1223,6 +920,54 @@ async function saveOrder(orderData) {
   }
 }
 
+// Get order by ID
+app.get('/api/orders/:orderId', async (req, res) => {
+  const client = await db.connect();
+  try {
+    const { orderId } = req.params;
+    console.log('Fetching order details for ID:', orderId);
+
+    const orderQuery = `
+      SELECT o.*, 
+             json_agg(json_build_object(
+               'book_id', oi.book_id,
+               'quantity', oi.quantity,
+               'price', oi.price,
+               'title', b.title
+             )) as order_items
+      FROM orders o
+      LEFT JOIN order_items oi ON o.order_id = oi.order_id
+      LEFT JOIN books b ON oi.book_id = b.book_id
+      WHERE o.order_id = $1
+      GROUP BY o.order_id`;
+
+    const result = await client.query(orderQuery, [orderId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Order not found'
+      });
+    }
+
+    const order = result.rows[0];
+    console.log('Found order:', order);
+
+    res.json({
+      success: true,
+      order
+    });
+  } catch (error) {
+    console.error('Error fetching order:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to fetch order details'
+    });
+  } finally {
+    client.release();
+  }
+});
+
 // Get all orders for admin panel
 app.get('/api/admin/orders', checkAdminCode, async (req, res) => {
   console.log('Fetching orders with admin code:', req.query.adminCode);
@@ -1373,7 +1118,48 @@ async function sendOrderConfirmationEmail(orderDetails) {
   }
 }
 
-// Toggle order status
+// Update order status
+app.put('/api/orders/:orderId/status', async (req, res) => {
+  const client = await db.connect();
+  try {
+    const { orderId } = req.params;
+    const { status } = req.body;
+
+    if (!['pending', 'paid', 'failed'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid status. Must be one of: pending, paid, failed'
+      });
+    }
+
+    const result = await client.query(
+      'UPDATE orders SET payment_status = $1, updated_at = NOW() WHERE order_id = $2 RETURNING *',
+      [status, orderId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Order not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      order: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error updating order status:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update order status'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// Toggle order status (Admin)
 app.put('/api/admin/orders/:orderId/status', checkAdminCode, async (req, res) => {
   try {
     const { orderId } = req.params;

@@ -45,10 +45,13 @@ function Admin() {
   const [activeTab, setActiveTab] = useState<'books' | 'orders'>('books');
   const [books, setBooks] = useState<Book[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [orderStatusFilter, setOrderStatusFilter] = useState('all');
+  const [orderPage, setOrderPage] = useState(1);
+  const [totalOrders, setTotalOrders] = useState(0);
+  const [orderTotalPages, setOrderTotalPages] = useState(1);
+  const [ordersPerPage] = useState(10);
   const [totalBooks, setTotalBooks] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
+  const [bookTotalPages, setBookTotalPages] = useState(1);
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState<string>('');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
@@ -97,7 +100,7 @@ function Admin() {
       const response = await getAdminBooks(currentPage, 10, search, sortBy, sortOrder, filters);
       setBooks(response.books || []);
       setTotalBooks(response.totalBooks || 0);
-      setTotalPages(response.totalPages || 1);
+      setBookTotalPages(response.totalPages || 1);
       setError(null);
     } catch (error: any) {
       console.error('Error in Admin component:', error);
@@ -116,12 +119,22 @@ function Admin() {
 
         try {
             setIsLoading(true);
-            const response = await getOrders();
-            if (Array.isArray(response)) {
-                setOrders(response);
+            const response = await getOrders(orderPage, ordersPerPage);
+            
+            if (response && response.orders) {
+                setOrders(response.orders);
+                setTotalOrders(response.totalOrders);
+                setOrderTotalPages(response.totalPages);
+                
+                // If we're on a page that no longer exists, go to the last page
+                if (orderPage > response.totalPages) {
+                    setOrderPage(response.totalPages);
+                }
             } else {
                 console.error("Unexpected response from getOrders:", response);
                 setOrders([]);
+                setTotalOrders(0);
+                setOrderTotalPages(1);
                 toast.error("Failed to fetch orders: Invalid data received.");
             }
         } catch (error: any) {
@@ -146,7 +159,7 @@ function Admin() {
         if (isAuthenticated && activeTab === 'orders') {
             fetchOrders();
         }
-    }, [isAuthenticated, activeTab]);
+    }, [isAuthenticated, activeTab, orderPage]); // Added orderPage to dependencies
 
   const handleEdit = (book: Book) => {
     setSelectedBook(book);
@@ -675,7 +688,7 @@ placeholder="Description"
                   </button>
                   <button
                     onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
-                    disabled={currentPage === totalPages}
+                    disabled={currentPage === bookTotalPages}
                     className="px-3 py-1 border rounded-md disabled:opacity-50"
                   >
                     Next
@@ -690,18 +703,7 @@ placeholder="Description"
         // Orders Section
         <div className="grid gap-6">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-semibold">Orders</h2>
-            <div className="space-x-4">
-              <button onClick={() => setOrderStatusFilter('all')} className={`px-4 py-2 rounded ${orderStatusFilter === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>
-                All Orders
-              </button>
-              <button onClick={() => setOrderStatusFilter('Completed')} className={`px-4 py-2 rounded ${orderStatusFilter === 'Completed' ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>
-                Completed Orders
-              </button>
-              <button onClick={() => setOrderStatusFilter('Pending')} className={`px-4 py-2 rounded ${orderStatusFilter === 'Pending' ? 'bg-yellow-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>
-                Pending Orders
-              </button>
-            </div>
+            <h2 className="text-xl font-semibold">Active Orders</h2>
           </div>
 
           {isLoading ? (
@@ -710,7 +712,7 @@ placeholder="Description"
             <div className="text-center p-4 text-gray-500">No orders found</div>
           ) : (
             orders
-              .filter(order => orderStatusFilter === 'all' || order.payment_status === orderStatusFilter)
+              .slice((orderPage - 1) * ordersPerPage, orderPage * ordersPerPage)
               .map((order) => {
                 // Parse shipping address safely and correctly handle object/string
                 let address = { street: '', city: '', state: '', postalCode: '', country: '', firstName: '', lastName: '', apartment: '' };
@@ -744,6 +746,7 @@ placeholder="Description"
                 }
 
                 return (
+                  <>
                   <div key={order.order_id} className="bg-white rounded-lg shadow-md p-6 mb-4">
                     <div className="flex justify-between items-start mb-4">
                       <div>
@@ -764,47 +767,24 @@ placeholder="Description"
                       <div className="text-right">
                         <div className="flex items-center space-x-2">
                           <span
-                            className={`px-3 py-1 rounded-full text-sm font-medium ${order.payment_status === 'Completed'
-                              ? 'bg-green-100 text-green-800'
-                              : order.payment_status === 'Pending'
-                                ? 'bg-yellow-100 text-yellow-800'
-                                : 'bg-blue-100 text-blue-800' // Add a color for 'Uploaded'
-                              }`}
+                            className={`px-3 py-1 rounded-full text-sm font-medium ${order.payment_status === 'Paid' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}
                           >
                             {order.payment_status}
                           </span>
-                          <button
-                            onClick={async () => {
-                              try {
-                                const newStatus = order.payment_status === 'Completed' ? 'Pending' : 'Completed';
-                                await updateOrderStatus(order.order_id, newStatus);
-                                toast.success(`Order marked as ${newStatus}`);
-                                fetchOrders();
-                              } catch (error) {
-                                toast.error('Failed to update order status');
-                              }
-                            }}
-                            className={`px-2 py-1 rounded text-sm ${order.payment_status === 'Completed' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'} hover:opacity-80`}
-                          >
-                            Mark as {order.payment_status === 'Completed' ? 'Pending' : 'Completed'}
-                          </button>
                         </div>
                       </div>
                     </div>
 
-                    <div className="border-t border-gray-200 pt-4">
-                      <h3 className="font-semibold mb-2">Items</h3>
-                      <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-gray-200">
-                          <thead>
-                            <tr className="bg-gray-50">
-                              <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Item</th>
-                              <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Quantity</th>
-                              <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Price</th>
-                              <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Total</th>
-                               <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Image</th> {/* Add Image Column */}
-                            </tr>
-                          </thead>
+                    <div className="overflow-x-auto mt-4">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead>
+                          <tr>
+                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Item</th>
+                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Quantity</th>
+                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Price</th>
+                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Total</th>
+                           </tr>
+                         </thead>
                           <tbody className="divide-y divide-gray-200">
                             {order.items.map((item) => (
                               <tr key={item.id}>
@@ -812,18 +792,16 @@ placeholder="Description"
                                 <td className="px-4 py-2">{item.quantity}</td>
                                 <td className="px-4 py-2">₹{item.price.toFixed(2)}</td>
                                 <td className="px-4 py-2">₹{(item.price * item.quantity).toFixed(2)}</td>
-                                 <td className="px-4 py-2">
+                                 {/* <td className="px-4 py-2">
                                   {item.book_image && (
                                     <img src={item.book_image} alt={item.title} className="h-12 w-12 object-contain" />
                                      )}
-                                </td>
+                                </td> */}
                               </tr>
                             ))}
                           </tbody>
                         </table>
                       </div>
-                    </div>
-
                     <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <h3 className="font-semibold mb-2">Shipping Address</h3>
@@ -847,16 +825,58 @@ placeholder="Description"
                         </div>
                       </div>
                     </div>
-                      {/* Image Preview (Conditional) */}
-                    {order.payment_id && (
-                        <div className="mt-4">
-                            <h3 className="font-semibold mb-2 ">Payment Receipt</h3>
-                            <img src={order.payment_id} alt="Payment Receipt" className="max-w-full h-16 object-cover" />                    
-                                </div>
-                    )}
                   </div>
+                  </>
                 );
               })
+          )}
+          {totalOrders > 0 && (
+            <div className="flex flex-col space-y-4 mt-4">
+              <div className="bg-white p-4 rounded-lg shadow">
+                <div className="flex justify-between items-center">
+                  <div className="text-sm text-gray-700">
+                    Showing {(orderPage - 1) * ordersPerPage + 1} to{' '}
+                    {Math.min(orderPage * ordersPerPage, totalOrders)} of {totalOrders} orders
+                  </div>
+                  <div className="flex items-center space-x-4">
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => setOrderPage(prev => prev - 1)}
+                        disabled={orderPage <= 1}
+                        className="px-4 py-2 border rounded-md disabled:opacity-50 hover:bg-gray-50 transition-colors"
+                      >
+                        Previous
+                      </button>
+                      <div className="flex items-center space-x-1 px-2">
+                        {Array.from({ length: orderTotalPages }, (_, i) => i + 1).map(pageNum => (
+                          <button
+                            key={pageNum}
+                            onClick={() => setOrderPage(pageNum)}
+                            className={`px-3 py-1 rounded-md transition-colors ${
+                              pageNum === orderPage
+                                ? 'bg-blue-600 text-white'
+                                : 'hover:bg-gray-100'
+                            }`}
+                          >
+                            {pageNum}
+                          </button>
+                        ))}
+                      </div>
+                      <button
+                        onClick={() => setOrderPage(prev => prev + 1)}
+                        disabled={orderPage >= orderTotalPages}
+                        className="px-4 py-2 border rounded-md disabled:opacity-50 hover:bg-gray-50 transition-colors"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="text-sm text-gray-500 text-center">
+                Total Orders: {totalOrders}
+              </div>
+            </div>
           )}
         </div>
       )}
