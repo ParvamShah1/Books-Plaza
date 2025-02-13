@@ -300,6 +300,8 @@ const CheckoutForm: React.FC<CheckoutFormProps> = ({ cart, onCheckoutComplete })
               <div className="border-t pt-4 space-y-2">
                 {renderPriceRow('Subtotal', inflatedSubtotal)}
                 {renderPriceRow('Discount', discount)}
+                <p>Delivery: <span className='text-green-600'>Free</span></p>
+
                 {renderPriceRow('Total', total, true)}
               </div>
             </div>
