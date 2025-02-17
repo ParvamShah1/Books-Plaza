@@ -457,7 +457,7 @@ app.get('/api/admin/orders', checkAdminCode, async (req, res) => {
 
 app.get('/api/books/featured', async (req, res) => {
   try {
-    const result = await db.query('SELECT * FROM books WHERE is_active = TRUE ORDER BY created_at DESC LIMIT 8');
+    const result = await db.query('SELECT * FROM books WHERE is_active = TRUE ORDER BY created_at DESC');
     
     const books = result.rows.map(book => ({
       ...book,
